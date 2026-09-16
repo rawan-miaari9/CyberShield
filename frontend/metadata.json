@@ -1,0 +1,6 @@
+{
+  "name": "CyberShield",
+  "description": "Enterprise cybersecurity operations platform with real-time threat intelligence, vulnerability management, and incident response.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
