@@ -7,50 +7,120 @@
     --font-display: 'Chakra Petch', 'Plus Jakarta Sans', sans-serif;
   }
 
+  html {
+    scroll-behavior: smooth;
+  }
+
   body {
     font-family: var(--font-sans);
-    font-size: 15px;
+    font-size: 16px;
     line-height: 1.6;
-    background-color: #080c14;
+    background-color: #0b0f17;
     color: #e2e8f0;
     overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
 
-  h1 { font-size: 26px; line-height: 1.25; }
-  h2 { font-size: 20px; line-height: 1.3; }
-  h3 { font-size: 17px; line-height: 1.4; }
-  p { font-size: 14px; }
-  table { font-size: 13.5px; }
+  h1 { font-size: 32px; line-height: 1.2; letter-spacing: -0.02em; }
+  h2 { font-size: 24px; line-height: 1.3; letter-spacing: -0.01em; }
+  h3 { font-size: 18.5px; line-height: 1.4; }
+  p { font-size: 15.5px; }
+  table { font-size: 14.5px; }
 
-  /* Custom scrollbar for dark cyber theme */
+  ::selection {
+    background: rgba(34, 211, 238, 0.22);
+    color: #f8fafc;
+  }
+
   ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: 8px;
+    height: 8px;
   }
   ::-webkit-scrollbar-track {
-    background: #0d131f;
+    background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: #1e293b;
-    border-radius: 3px;
+    background: #26313f;
+    border-radius: 99px;
   }
   ::-webkit-scrollbar-thumb:hover {
     background: #334155;
   }
+
+  input, select, textarea {
+    color-scheme: dark;
+  }
+
+  select option {
+    background-color: #111827;
+    color: #e2e8f0;
+  }
 }
 
-.font-mono-code {
-  font-family: var(--font-mono);
+@layer utilities {
+  .font-mono-code {
+    font-family: var(--font-mono);
+  }
+
+  .font-display {
+    font-family: var(--font-display);
+  }
+
+  /* Subtle brand-tinted grid — first-style feel, calmed */
+  .cyber-grid-bg {
+    background-size: 32px 32px;
+    background-image:
+      linear-gradient(to right, rgba(56, 189, 248, 0.045) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(56, 189, 248, 0.045) 1px, transparent 1px);
+    mask-image: radial-gradient(ellipse 90% 70% at 50% 0%, black 50%, transparent 100%);
+  }
+
+  .cyber-grid-bg-full {
+    background-size: 36px 36px;
+    background-image:
+      linear-gradient(to right, rgba(56, 189, 248, 0.05) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(56, 189, 248, 0.05) 1px, transparent 1px);
+  }
+
+  .card-hover {
+    transition: transform 0.2s ease, border-color 0.2s ease;
+  }
+  .card-hover:hover {
+    transform: translateY(-2px);
+    border-color: rgba(103, 232, 249, 0.25) !important;
+  }
+
+  .animate-rise {
+    animation: rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .animate-rise-1 { animation: rise 0.5s 0.05s cubic-bezier(0.22, 1, 0.36, 1) both; }
+  .animate-rise-2 { animation: rise 0.5s 0.1s cubic-bezier(0.22, 1, 0.36, 1) both; }
+  .animate-rise-3 { animation: rise 0.5s 0.15s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+  /* Title gradients — calmed, no glow */
+  .text-gradient-cyber {
+    background: linear-gradient(100deg, #e0f2fe 0%, #67e8f9 45%, #a5b4fc 80%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .text-gradient-faint {
+    background: linear-gradient(180deg, #ffffff, #cbd5e1);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* legacy classes kept inert */
+  .animate-float, .animate-float-slow, .animate-aurora, .animate-shimmer, .animate-scanline { animation: none; }
+  .animate-pulse-dot { animation: none; }
+  .glass, .glass-strong { background: transparent; backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .ring-glow-cyan { box-shadow: none; }
+  .noise-overlay::after { display: none; }
 }
 
-.font-display {
-  font-family: var(--font-display);
-}
-
-/* Subtle cyber grid backdrop */
-.cyber-grid-bg {
-  background-size: 32px 32px;
-  background-image: 
-    linear-gradient(to right, rgba(56, 189, 248, 0.03) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(56, 189, 248, 0.03) 1px, transparent 1px);
+@keyframes rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
 }
