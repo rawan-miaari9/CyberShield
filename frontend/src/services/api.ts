@@ -22,6 +22,7 @@ import {
   mockVulnerabilities,
 } from '../data/mockData';
 
+
 export const apiClient: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
   timeout: 4000,
@@ -33,6 +34,63 @@ apiClient.interceptors.request.use((config) => {
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
+
+apiClient.interceptors.response.use(
+  (response) => response,
+
+  async (error) => {
+    const originalRequest = error.config;
+
+    // If access token expired, try refreshing it once
+    if (
+      error.response?.status === 401 &&
+      !originalRequest._retry &&
+      !originalRequest.url?.includes('auth/login/') &&
+      !originalRequest.url?.includes('auth/refresh/')
+    ) {
+      originalRequest._retry = true;
+
+      const refreshToken = localStorage.getItem(
+        'cybershield_refresh_token'
+      );
+
+      if (!refreshToken) {
+        return Promise.reject(error);
+      }
+
+      try {
+        const response = await axios.post(
+          `${API_BASE_URL}auth/refresh/`,
+          {
+            refresh: refreshToken,
+          }
+        );
+
+        const newAccessToken = response.data.access;
+
+        localStorage.setItem(
+          'cybershield_token',
+          newAccessToken
+        );
+
+        originalRequest.headers.Authorization =
+          `Bearer ${newAccessToken}`;
+
+        return apiClient(originalRequest);
+      } catch (refreshError) {
+        localStorage.removeItem('cybershield_token');
+        localStorage.removeItem('cybershield_refresh_token');
+        localStorage.removeItem('cybershield_user');
+
+        window.location.href = '/login';
+
+        return Promise.reject(refreshError);
+      }
+    }
+
+    return Promise.reject(error);
+  }
+);
 
 function toApiError(err: unknown, resource: string): Error {
   if (axios.isAxiosError(err)) {
@@ -78,30 +136,57 @@ async function demoLogin(email: string, password: string): Promise<{ token: stri
   return { token: `demo-token-${user.id}`, user };
 }
 
-async function realLogin(email: string, password: string): Promise<{ token: string; user: User }> {
+async function realLogin(
+  username: string,
+  password: string
+): Promise<{ token: string; refreshToken: string; user: User }> {
+
   let res;
+
   try {
-    res = await apiClient.post('auth/login/', { email, password });
+    res = await apiClient.post('auth/login/', {
+      username,
+      password,
+    });
   } catch (err) {
     throw toApiError(err, 'authentication');
   }
-  const data = res.data as { token?: string; access?: string; user?: User };
-  const token = data.token || data.access || '';
-  if (!token || !data.user) {
+
+  const data = res.data as {
+    access?: string;
+    refresh?: string;
+    user?: User;
+  };
+
+  const token = data.access || '';
+  const refreshToken = data.refresh || '';
+
+  if (!token || !refreshToken || !data.user) {
     throw new Error('Login failed: the API did not return a valid session.');
   }
-  return { token, user: data.user };
-}
 
+  return {
+    token,
+    refreshToken,
+    user: data.user,
+  };
+}
 export const api = {
   /** True while the app runs on temporary demo data (see src/services/config.ts). */
   isDemoMode: USE_MOCK_DATA,
 
-  async login(email: string, password: string): Promise<{ token: string; user: User }> {
-    if (USE_MOCK_DATA) return demoLogin(email, password);
-    return realLogin(email, password);
-  },
+  async login(
+  username: string,
+  password: string
+): Promise<{ token: string; refreshToken?: string; user: User }> {
 
+  if (USE_MOCK_DATA) return demoLogin(username, password);
+
+  return realLogin(username, password);
+},
+async getCurrentUser(): Promise<User> {
+  return fetchResource<User>('auth/me/', 'current user');
+},
   async getFindings(): Promise<SecurityFinding[]> {
     if (USE_MOCK_DATA) return mockFindings;
     return fetchResource<SecurityFinding[]>('findings/', 'findings');
@@ -168,3 +253,4 @@ export const api = {
     }
   },
 };
+

@@ -2,12 +2,19 @@ export type Severity = 'critical' | 'high' | 'medium' | 'low';
 export type Role = 'Administrator' | 'Security Analyst' | 'IT / Developer' | 'Security Manager';
 
 export interface User {
-  id: string;
-  name: string;
+  id: string | number;
+
+  // Django authentication fields
+  username: string;
   email: string;
+  first_name: string;
+  last_name: string;
   role: Role;
-  active: boolean;
-  lastLogin: string;
+
+  // Existing frontend fields
+  name?: string;
+  active?: boolean;
+  lastLogin?: string;
 }
 
 export type AssetType =

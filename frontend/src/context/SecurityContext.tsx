@@ -136,18 +136,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   }, []);
 
-  const login = useCallback(async (email: string, password: string) => {
-    const result = await api.login(email, password);
-    setUser(result.user);
-    setToken(result.token);
-    localStorage.setItem('cybershield_token', result.token);
-    localStorage.setItem('cybershield_user', JSON.stringify(result.user));
-  }, []);
+const login = useCallback(async (username: string, password: string) => {
+  const result = await api.login(username, password);
+
+  setUser(result.user);
+  setToken(result.token);
+
+  localStorage.setItem('cybershield_token', result.token);
+  localStorage.setItem('cybershield_user', JSON.stringify(result.user));
+
+  if (result.refreshToken) {
+    localStorage.setItem('cybershield_refresh_token', result.refreshToken);
+  }
+}, []);
 
   const logout = useCallback(() => {
     setUser(null);
     setToken(null);
     localStorage.removeItem('cybershield_token');
+    localStorage.removeItem('cybershield_refresh_token');
     localStorage.removeItem('cybershield_user');
   }, []);
 

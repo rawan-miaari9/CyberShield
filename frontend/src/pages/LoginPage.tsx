@@ -13,8 +13,8 @@ const points = [
 export const LoginPage: React.FC = () => {
   const { login } = useApp();
   const navigate = useNavigate();
-  const [email, setEmail] = useState('admin@cybershield.local');
-  const [password, setPassword] = useState('admin123');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -24,7 +24,7 @@ export const LoginPage: React.FC = () => {
     setError(null);
     setBusy(true);
     try {
-      await login(email, password);
+      await login(username, password);
       navigate('/dashboard', { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed.');
@@ -96,14 +96,14 @@ export const LoginPage: React.FC = () => {
 
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
-              <label className="block text-[15px] font-medium text-slate-200 mb-2">Email</label>
+              <label className="block text-[15px] font-medium text-slate-200 mb-2">Username</label>
               <input
-                type="email"
+                type="text"
                 required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
                 className={`${inputClass} !px-4 !py-3.5 !text-[16px]`}
-                placeholder="you@company.com"
+                placeholder="Enter your username"
                 autoComplete="username"
               />
             </div>
@@ -148,27 +148,27 @@ export const LoginPage: React.FC = () => {
             </button>
           </form>
 
-          <div className="mt-9 pt-7 border-t border-slate-800">
+          {/* <div className="mt-9 pt-7 border-t border-slate-800">
             <p className="text-[14px] font-medium text-slate-500 mb-3.5">Demo accounts — click to fill</p>
             <div className="grid grid-cols-2 gap-3">
               <button
                 type="button"
-                onClick={() => { setEmail('admin@cybershield.local'); setPassword('admin123'); }}
+                onClick={() => { setUsername('Administrator'); setPassword(''); }}
                 className="px-4 py-3.5 rounded-lg bg-slate-800/50 hover:bg-slate-800 border border-slate-700/80 text-left transition-colors"
               >
                 <p className="text-[15px] font-semibold text-slate-200">Admin</p>
-                <p className="text-[13px] text-slate-500 truncate font-mono-code">admin@cybershield.local</p>
+                <p className="text-[13px] text-slate-500 truncate font-mono-code">Admin</p>
               </button>
               <button
                 type="button"
-                onClick={() => { setEmail('analyst@cybershield.local'); setPassword('analyst123'); }}
+                onClick={() => { setUsername('analyst'); setPassword(''); }}
                 className="px-4 py-3.5 rounded-lg bg-slate-800/50 hover:bg-slate-800 border border-slate-700/80 text-left transition-colors"
               >
                 <p className="text-[15px] font-semibold text-slate-200">Analyst</p>
-                <p className="text-[13px] text-slate-500 truncate font-mono-code">analyst@cybershield.local</p>
+                <p className="text-[13px] text-slate-500 truncate font-mono-code">Security Analyst</p>
               </button>
             </div>
-          </div>
+          </div> */}
         </div>
       </div>
     </div>

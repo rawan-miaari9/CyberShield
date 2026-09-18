@@ -22,6 +22,16 @@ export const Header: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
+  const displayName = user
+  ? `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username
+  : 'CyberShield';
+
+const initials = displayName
+  .split(' ')
+  .map((part) => part[0])
+  .join('')
+  .substring(0, 2)
+  .toUpperCase();
 
   const base = '/' + location.pathname.split('/')[1];
   const meta = titles[base] || { title: 'CyberShield', crumb: 'Platform' };
@@ -78,10 +88,10 @@ export const Header: React.FC = () => {
 
         <div className="hidden sm:flex items-center gap-3 pl-4 border-l border-slate-800">
           <div className="w-11 h-11 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-[15px] font-semibold text-slate-200">
-            {user ? user.name.split(' ').map((p) => p[0]).join('').substring(0, 2).toUpperCase() : 'CS'}
+            {initials}
           </div>
           <div className="leading-tight hidden xl:block">
-            <div className="text-[15px] font-semibold text-slate-100">{user?.name || 'Analyst'}</div>
+            <div className="text-[15px] font-semibold text-slate-100">{displayName}</div>
             <div className="text-[13px] text-slate-500">{user?.role || ''}</div>
           </div>
           <button
