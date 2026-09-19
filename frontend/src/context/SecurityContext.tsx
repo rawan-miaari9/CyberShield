@@ -32,14 +32,16 @@ interface AppContextType {
   markNotificationRead: (id: string) => void;
   markAllNotificationsRead: () => void;
   updateFindingStatus: (id: string, status: SecurityFinding['status']) => void;
-  promoteFinding: (id: string) => string;
-  updateVulnerabilityStatus: (id: string, status: Vulnerability['status']) => void;
-  assignVulnerability: (id: string, userId: string | null) => void;
+  promoteFinding: (id: string, impact: number, likelihood: number) => Promise<string>;
+  updateVulnerabilityStatus: (id: string, status: Vulnerability['status']) => Promise<void>;
+  assignVulnerability: (id: string, userId: string | null) => Promise<void>;
+  updateVulnerabilityDueDate: (id: string, dueDate: string) => Promise<void>;
+  verifyVulnerability: (id: string) => Promise<void>;
   updateRemediationStatus: (id: string, status: RemediationTask['status']) => void;
   syncScanner: (id: string) => Promise<number>;
   unreadCount: number;
-  assetById: (id: string) => Asset | undefined;
-  userById: (id: string | null) => User | undefined;
+  assetById: (id: string | number) => Asset | undefined;
+  userById: (id: string | number | null) => User | undefined;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -175,58 +177,89 @@ const login = useCallback(async (username: string, password: string) => {
   );
 
   const promoteFinding = useCallback(
-    (id: string): string => {
+    async (id: string, impact: number, likelihood: number): Promise<string> => {
       const finding = findings.find((f) => f.id === id);
       if (!finding) return '';
-      const asset = assets.find((a) => a.id === finding.assetId);
-      const impact = finding.severity === 'critical' ? 5 : finding.severity === 'high' ? 4 : finding.severity === 'medium' ? 3 : 2;
-      const likelihood = 3;
-      const riskScore = calculateRiskScore(impact, likelihood);
-      const newId = `VULN-${String(vulnerabilities.length + 1).padStart(3, '0')}`;
-      const vuln: Vulnerability = {
-        id: newId,
-        findingId: finding.id,
-        title: finding.title,
-        description: finding.description,
-        assetId: finding.assetId,
-        severity: finding.severity,
-        impact,
-        likelihood,
-        riskScore,
-        riskLevel: riskLevelForScore(riskScore),
-        status: 'NEW',
-        assignedTo: null,
-        dueDate: null,
-        discoveredAt: new Date().toISOString().substring(0, 10),
-        cwe: finding.cwe,
-        proposedFix: asset ? `Review and remediate on ${asset.name}.` : 'Review and remediate.',
-      };
+      const vuln = await api.promoteFinding(id, impact, likelihood);
+    
       setVulnerabilities((prev) => [vuln, ...prev]);
       setFindings((prev) => prev.map((f) => (f.id === id ? { ...f, status: 'Promoted' as const } : f)));
       setNotifications((prev) => [
-        { id: `N-${Date.now()}`, title: 'Finding promoted', message: `${finding.id} was promoted to ${newId}.`, type: 'critical_vulnerability', read: false, createdAt: new Date().toISOString(), link: `/vulnerabilities/${newId}` },
+        {
+          id: `N-${Date.now()}`,
+          title: 'Finding promoted',
+          message: `${finding.id} was promoted to vulnerability ${vuln.id}.`,
+          type: 'critical_vulnerability',
+          read: false,
+          createdAt: new Date().toISOString(),
+          link: `/vulnerabilities/${vuln.id}`,
+        },
         ...prev,
       ]);
-      appendAudit(setAuditLogs, user?.email || 'unknown', 'FINDING_PROMOTE', 'SecurityFinding', id, finding.status, `Promoted -> ${newId}`);
-      return newId;
+
+      appendAudit(
+        setAuditLogs,
+        user?.email || 'unknown',
+        'FINDING_PROMOTE',
+        'SecurityFinding',
+        id,
+        finding.status,
+        `Promoted -> ${vuln.id}`
+      );
+      return vuln.id;
     },
     [findings, assets, vulnerabilities.length, user],
   );
 
   const updateVulnerabilityStatus = useCallback(
-    (id: string, status: Vulnerability['status']) => {
-      setVulnerabilities((prev) => prev.map((v) => (v.id === id ? { ...v, status } : v)));
-      appendAudit(setAuditLogs, user?.email || 'unknown', 'VULNERABILITY_STATUS_CHANGE', 'Vulnerability', id, null, status);
+    async (id: string, status: Vulnerability['status']) => {
+      const previous = vulnerabilities.find((v) => v.id === id);
+      // REMEDIATED -> VERIFIED keeps using the dedicated verify endpoint
+      // so the existing Mark-verified behavior is preserved.
+      const updated = status === 'VERIFIED'
+        ? await api.verifyVulnerability(id)
+        : await api.transitionVulnerability(id, status);
+      setVulnerabilities((prev) => prev.map((v) => (v.id === id ? updated : v)));
+      appendAudit(setAuditLogs, user?.email || 'unknown', 'VULNERABILITY_STATUS_CHANGE', 'Vulnerability', id, previous?.status ?? null, status);
+    },
+    [user, vulnerabilities],
+  );
+
+  const assignVulnerability = useCallback(
+    async (id: string, userId: string | null) => {
+      if (userId === null || userId === '') {
+        throw new Error('Please select a user.');
+      }
+      const updated = await api.assignVulnerability(id, userId);
+      setVulnerabilities((prev) =>
+        prev.map((v) => (v.id === id ? updated : v)),
+      );
+      appendAudit(setAuditLogs, user?.email || 'unknown', 'VULNERABILITY_ASSIGN', 'Vulnerability', id, null, userId);
     },
     [user],
   );
 
-  const assignVulnerability = useCallback(
-    (id: string, userId: string | null) => {
+  const updateVulnerabilityDueDate = useCallback(
+    async (id: string, dueDate: string) => {
+      if (!dueDate) {
+        throw new Error('Please select a due date.');
+      }
+      const updated = await api.updateVulnerabilityDueDate(id, dueDate);
       setVulnerabilities((prev) =>
-        prev.map((v) => (v.id === id ? { ...v, assignedTo: userId, status: userId ? (v.status === 'NEW' ? 'ASSIGNED' : v.status) : v.status } : v)),
+        prev.map((v) => (v.id === id ? updated : v)),
       );
-      appendAudit(setAuditLogs, user?.email || 'unknown', 'VULNERABILITY_ASSIGN', 'Vulnerability', id, null, userId || 'unassigned');
+      appendAudit(setAuditLogs, user?.email || 'unknown', 'VULNERABILITY_DUE_DATE', 'Vulnerability', id, null, dueDate);
+    },
+    [user],
+  );
+
+  const verifyVulnerability = useCallback(
+    async (id: string) => {
+      const updated = await api.verifyVulnerability(id);
+      setVulnerabilities((prev) =>
+        prev.map((v) => (v.id === id ? updated : v)),
+      );
+      appendAudit(setAuditLogs, user?.email || 'unknown', 'VULNERABILITY_VERIFY', 'Vulnerability', id, null, 'VERIFIED');
     },
     [user],
   );
@@ -260,19 +293,22 @@ const login = useCallback(async (username: string, password: string) => {
     [user],
   );
 
-  const assetById = useCallback((id: string) => assets.find((a) => a.id === id), [assets]);
-  const userById = useCallback((id: string | null) => users.find((u) => u.id === id), [users]);
+  const assetById = useCallback((id: string | number) => assets.find((a) => String(a.id) === String(id)), [assets]);
+  const userById = useCallback((id: string | number | null) => {
+    if (id === null || id === undefined || id === '') return undefined;
+    return users.find((u) => String(u.id) === String(id));
+  }, [users]);
 
   const value = useMemo(
     () => ({
       user, token, login, logout, findings, vulnerabilities, assets, remediation, integrations,
       notifications, auditLogs, users, isLoading, apiError, isDemoMode: USE_MOCK_DATA, markNotificationRead, markAllNotificationsRead,
       updateFindingStatus, promoteFinding, updateVulnerabilityStatus, assignVulnerability,
-      updateRemediationStatus, syncScanner,
+      updateVulnerabilityDueDate, verifyVulnerability, updateRemediationStatus, syncScanner,
       unreadCount: notifications.filter((n) => !n.read).length,
       assetById, userById,
     }),
-    [user, token, login, logout, findings, vulnerabilities, assets, remediation, integrations, notifications, auditLogs, users, isLoading, apiError, markNotificationRead, markAllNotificationsRead, updateFindingStatus, promoteFinding, updateVulnerabilityStatus, assignVulnerability, updateRemediationStatus, syncScanner, assetById, userById],
+    [user, token, login, logout, findings, vulnerabilities, assets, remediation, integrations, notifications, auditLogs, users, isLoading, apiError, markNotificationRead, markAllNotificationsRead, updateFindingStatus, promoteFinding, updateVulnerabilityStatus, assignVulnerability, updateVulnerabilityDueDate, verifyVulnerability, updateRemediationStatus, syncScanner, assetById, userById],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

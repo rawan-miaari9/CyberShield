@@ -9,8 +9,10 @@ const flow: RemediationStatus[] = ['To Do', 'In Progress', 'Remediated', 'Awaiti
 
 export const RemediationDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
-  const { remediation, vulnerabilities, userById, updateRemediationStatus, updateVulnerabilityStatus, user } = useApp();
+  const { remediation, vulnerabilities, userById, updateRemediationStatus, verifyVulnerability, user } = useApp();
   const [notes, setNotes] = useState('');
+  const [verifyErr, setVerifyErr] = useState<string | null>(null);
+  const [verifying, setVerifying] = useState(false);
   const task = remediation.find((r) => r.id === id);
 
   if (!task) {
@@ -25,9 +27,20 @@ export const RemediationDetailPage: React.FC = () => {
   const vuln = vulnerabilities.find((v) => v.id === task.vulnerabilityId);
   const isAnalyst = user?.role === 'Security Analyst' || user?.role === 'Administrator' || user?.role === 'Security Manager';
 
-  const verify = () => {
-    updateRemediationStatus(task.id, 'Completed');
-    if (vuln) updateVulnerabilityStatus(vuln.id, 'VERIFIED');
+  const verify = async () => {
+    setVerifyErr(null);
+    if (!vuln) return;
+    setVerifying(true);
+    try {
+      // Persisted Strict lifecycle: only REMEDIATED -> VERIFIED succeeds;
+      // backend rejects anything else (no local-only status jump).
+      await verifyVulnerability(vuln.id);
+      updateRemediationStatus(task.id, 'Completed');
+    } catch (e) {
+      setVerifyErr(e instanceof Error ? e.message : 'Verification failed.');
+    } finally {
+      setVerifying(false);
+    }
   };
 
   return (
@@ -71,8 +84,9 @@ export const RemediationDetailPage: React.FC = () => {
             {flow.filter((s) => s !== task.status && s !== 'Completed').map((s) => (
               <button key={s} onClick={() => updateRemediationStatus(task.id, s)} className={`${buttonGhost} w-full justify-center !text-xs`}>Move to {s}</button>
             ))}
-            <button onClick={verify} disabled={!isAnalyst} title={isAnalyst ? 'Verify as analyst' : 'Only an analyst can verify'} className={`${buttonPrimary} w-full justify-center !text-xs`}>
-              Verify & complete (analyst)
+            {verifyErr && <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-sm text-rose-300">{verifyErr}</div>}
+            <button onClick={verify} disabled={!isAnalyst || verifying} title={isAnalyst ? 'Verify as analyst' : 'Only an analyst can verify'} className={`${buttonPrimary} w-full justify-center !text-xs`}>
+              {verifying ? 'Verifying…' : 'Verify & complete (analyst)'}
             </button>
             {!isAnalyst && <p className="text-xs text-slate-500">Verification requires the Security Analyst role.</p>}
           </div>

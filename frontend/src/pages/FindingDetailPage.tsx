@@ -9,6 +9,8 @@ export const FindingDetailPage: React.FC = () => {
   const navigate = useNavigate();
   const { findings, assetById, updateFindingStatus, promoteFinding } = useApp();
   const [msg, setMsg] = useState<string | null>(null);
+  const [impact, setImpact] = useState<number>(3);
+  const [likelihood, setLikelihood] = useState<number>(3);
   const finding = findings.find((f) => f.id === id);
 
   if (!finding) {
@@ -22,12 +24,12 @@ export const FindingDetailPage: React.FC = () => {
 
   const asset = assetById(finding.assetId);
 
-  const handlePromote = () => {
-    const newId = promoteFinding(finding.id);
-    setMsg(`Promoted to ${newId}.`);
-    setTimeout(() => navigate(`/vulnerabilities/${newId}`), 900);
-  };
+const handlePromote = async () => {
+  const newId = await promoteFinding(finding.id, impact, likelihood);
 
+  setMsg(`Promoted to ${newId}.`);
+  setTimeout(() => navigate(`/vulnerabilities/${newId}`), 900);
+};
   return (
     <div>
       <Link to="/findings" className="inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-cyan-300 mb-6">
@@ -53,7 +55,13 @@ export const FindingDetailPage: React.FC = () => {
             <Field label="CVSS">{finding.cvssScore !== null ? <Mono>{finding.cvssScore.toFixed(1)}</Mono> : '—'}</Field>
             <Field label="CWE">{finding.cwe ? <Mono>{finding.cwe}</Mono> : '—'}</Field>
             <Field label="Alert ref"><Mono>{finding.alertRef}</Mono></Field>
-            <Field label="Imported"><Mono>{finding.importedAt}</Mono></Field>
+            <Field label="Imported"><Mono>{new Date(finding.importedAt).toLocaleString(undefined, {
+              year: 'numeric',
+              month: 'short',
+              day: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+            })}</Mono></Field>
           </div>
         </Card>
         <div className="space-y-6">
@@ -73,6 +81,41 @@ export const FindingDetailPage: React.FC = () => {
           <Card className="p-6">
             <h3 className="text-base font-semibold text-white mb-2">Analyst review</h3>
             <p className="text-sm text-slate-400 mb-4 leading-relaxed">If this finding is valid, promote it into a managed vulnerability with risk scoring and assignment.</p>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-slate-300 mb-2">
+                Impact (1–5)
+              </label>
+
+              <select
+                value={impact}
+                onChange={(e) => setImpact(Number(e.target.value))}
+                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-white"
+              >
+                <option value={1}>1 - Very Low</option>
+                <option value={2}>2 - Low</option>
+                <option value={3}>3 - Medium</option>
+                <option value={4}>4 - High</option>
+                <option value={5}>5 - Critical</option>
+              </select>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-slate-300 mb-2">
+                Likelihood (1–5)
+              </label>
+
+              <select
+                value={likelihood}
+                onChange={(e) => setLikelihood(Number(e.target.value))}
+                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-white"
+              >
+                <option value={1}>1 - Very Low</option>
+                <option value={2}>2 - Low</option>
+                <option value={3}>3 - Medium</option>
+                <option value={4}>4 - High</option>
+                <option value={5}>5 - Very High</option>
+              </select>
+            </div>
             <button onClick={handlePromote} disabled={finding.status === 'Promoted'} className={`${buttonPrimary} w-full justify-center`}>
               {finding.status === 'Promoted' ? 'Already promoted' : 'Promote to vulnerability'}
             </button>

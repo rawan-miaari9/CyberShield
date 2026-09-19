@@ -95,10 +95,13 @@ apiClient.interceptors.response.use(
 function toApiError(err: unknown, resource: string): Error {
   if (axios.isAxiosError(err)) {
     const status = err.response?.status;
-    const detail =
-      (err.response?.data as { detail?: string; message?: string } | undefined)?.detail ||
-      (err.response?.data as { detail?: string; message?: string } | undefined)?.message;
-    if (status) return new Error(`API error loading ${resource}: HTTP ${status}${detail ? ` — ${detail}` : ''}.`);
+    const body = err.response?.data as { detail?: string; message?: string; error?: string } | undefined;
+    const detail = body?.detail || body?.message || body?.error;
+    if (status) {
+      const e = new Error(detail ? `${detail}` : `API error loading ${resource}: HTTP ${status}.`);
+      (e as { status?: number }).status = status;
+      return e;
+    }
     return new Error(`Cannot reach the API loading ${resource}: ${err.message}.`);
   }
   return new Error(`Unexpected error loading ${resource}.`);
@@ -154,18 +157,44 @@ type DjangoSecurityFinding = {
   updated_at: string;
 };
 
+// Day 5 status consistency (Part 10, smallest change):
+// backend uses UPPERCASE (NEW/REVIEWED/PROMOTED/DISMISSED, HIGH/...),
+// frontend Finding types use Title-case/lowercase. Normalize here so
+// existing FindingsPage filters and FindingDetailPage buttons keep working.
+function normalizeFindingStatus(s: string): SecurityFinding['status'] {
+  const u = String(s || '').toUpperCase();
+  if (u === 'NEW') return 'New';
+  if (u === 'REVIEWED') return 'Reviewed';
+  if (u === 'PROMOTED') return 'Promoted';
+  if (u === 'DISMISSED' || u === 'IGNORED') return 'Ignored';
+  return (s as SecurityFinding['status']);
+}
+
+function normalizeSeverity(s: string): SecurityFinding['severity'] {
+  return String(s || '').toLowerCase() as SecurityFinding['severity'];
+}
+
+function normalizeRiskLevel(s: string): Vulnerability['riskLevel'] {
+  const u = String(s || '').toUpperCase();
+  if (u === 'LOW') return 'Low';
+  if (u === 'MEDIUM') return 'Medium';
+  if (u === 'HIGH') return 'High';
+  if (u === 'CRITICAL') return 'Critical';
+  return (s as Vulnerability['riskLevel']);
+}
+
 function mapDjangoFinding(finding: DjangoSecurityFinding): SecurityFinding {
   return {
     id: String(finding.id),
     title: finding.title,
     description: finding.description,
-    severity: finding.severity as SecurityFinding['severity'],
+    severity: normalizeSeverity(finding.severity),
     cvssScore: null,
     cwe: finding.cwe_id || null,
     assetId: String(finding.asset),
     scannerSource: `Integration ${finding.integration}`,
     importedAt: finding.imported_at,
-    status: finding.status as SecurityFinding['status'],
+    status: normalizeFindingStatus(finding.status),
     evidence: finding.evidence,
     alertRef: finding.external_id,
   };
@@ -202,11 +231,11 @@ function mapDjangoVulnerability(
     // We will resolve it from findingId in React.
     assetId: '',
 
-    severity: vulnerability.severity as Vulnerability['severity'],
+    severity: normalizeSeverity(vulnerability.severity),
     impact: vulnerability.impact,
     likelihood: vulnerability.likelihood,
     riskScore: vulnerability.risk_score,
-    riskLevel: vulnerability.risk_level as Vulnerability['riskLevel'],
+    riskLevel: normalizeRiskLevel(vulnerability.risk_level),
     status: vulnerability.status as Vulnerability['status'],
 
     assignedTo: vulnerability.assigned_to
@@ -310,6 +339,89 @@ async getFindings(): Promise<SecurityFinding[]> {
   );
 
   return findings.map(mapDjangoFinding);
+},
+
+async reviewFinding(id: string): Promise<SecurityFinding> {
+  const finding = await apiClient.post<DjangoSecurityFinding>(
+    `findings/${id}/review/`
+  );
+
+  return mapDjangoFinding(finding.data);
+},
+
+async promoteFinding(
+  id: string,
+  impact: number,
+  likelihood: number
+): Promise<Vulnerability> {
+  const vulnerability = await apiClient.post<DjangoVulnerability>(
+    `findings/${id}/promote/`,
+    {
+      impact,
+      likelihood,
+    }
+  );
+
+  return mapDjangoVulnerability(vulnerability.data);
+},
+
+async assignVulnerability(
+  id: string,
+  userId: string
+): Promise<Vulnerability> {
+  try {
+    const res = await apiClient.post<DjangoVulnerability>(
+      `vulnerabilities/${id}/assign/`,
+      { assigned_to: Number(userId) }
+    );
+    return mapDjangoVulnerability(res.data);
+  } catch (err) {
+    throw toApiError(err, 'vulnerability assignment');
+  }
+},
+
+async updateVulnerabilityDueDate(
+  id: string,
+  dueDate: string
+): Promise<Vulnerability> {
+  try {
+    const res = await apiClient.post<DjangoVulnerability>(
+      `vulnerabilities/${id}/due-date/`,
+      { due_date: dueDate }
+    );
+    return mapDjangoVulnerability(res.data);
+  } catch (err) {
+    throw toApiError(err, 'due date update');
+  }
+},
+
+async verifyVulnerability(
+  id: string
+): Promise<Vulnerability> {
+  try {
+    const res = await apiClient.post<DjangoVulnerability>(
+      `vulnerabilities/${id}/verify/`,
+      {}
+    );
+    return mapDjangoVulnerability(res.data);
+  } catch (err) {
+    throw toApiError(err, 'vulnerability verification');
+  }
+},
+
+async transitionVulnerability(
+  id: string,
+  status: string
+): Promise<Vulnerability> {
+  try {
+    const res = await apiClient.post<DjangoVulnerability>(
+      `vulnerabilities/${id}/transition/`,
+      { status }
+    );
+    return mapDjangoVulnerability(res.data);
+  } catch (err) {
+    throw toApiError(err, 'lifecycle transition');
+  }
 },
   async getVulnerabilities(): Promise<Vulnerability[]> {
   if (USE_MOCK_DATA) return mockVulnerabilities;
