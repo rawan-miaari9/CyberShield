@@ -272,19 +272,19 @@ class Vulnerability(models.Model):
 
     updated_at = models.DateTimeField(auto_now=True)
 
-def save(self, *args, **kwargs):
-    self.risk_score = self.impact * self.likelihood
+    def save(self, *args, **kwargs):
+        self.risk_score = self.impact * self.likelihood
 
-    if self.risk_score <= 4:
-        self.risk_level = 'LOW'
-    elif self.risk_score <= 9:
-        self.risk_level = 'MEDIUM'
-    elif self.risk_score <= 16:
-        self.risk_level = 'HIGH'
-    else:
-        self.risk_level = 'CRITICAL'
+        if self.risk_score <= 4:
+            self.risk_level = 'LOW'
+        elif self.risk_score <= 9:
+            self.risk_level = 'MEDIUM'
+        elif self.risk_score <= 16:
+            self.risk_level = 'HIGH'
+        else:
+            self.risk_level = 'CRITICAL'
 
-    super().save(*args, **kwargs)
+        super().save(*args, **kwargs)
 
 def __str__(self):
     return self.title

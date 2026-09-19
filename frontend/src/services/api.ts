@@ -108,6 +108,120 @@ function toApiError(err: unknown, resource: string): Error {
  * REAL API access (Django REST Framework). These helpers never fall back to
  * demo data: failures throw so the UI can report real API errors.
  */
+type DjangoAsset = {
+  id: number;
+  name: string;
+  asset_type: string;
+  hostname: string;
+  ip_address: string | null;
+  url: string;
+  criticality: string;
+  description: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+function mapDjangoAsset(asset: DjangoAsset): Asset {
+  return {
+    id: String(asset.id),
+    name: asset.name,
+    type: asset.asset_type as Asset['type'],
+    address: asset.url || asset.hostname || asset.ip_address || '',
+    description: asset.description,
+    owner: '',
+    criticality: asset.criticality as Asset['criticality'],
+    createdAt: asset.created_at,
+  };
+}
+
+type DjangoSecurityFinding = {
+  id: number;
+  integration: number;
+  asset: number;
+  external_id: string;
+  fingerprint: string;
+  title: string;
+  description: string;
+  severity: string;
+  confidence: string;
+  cwe_id: string;
+  evidence: string;
+  source_url: string;
+  status: string;
+  raw_data: Record<string, unknown> | null;
+  imported_at: string;
+  updated_at: string;
+};
+
+function mapDjangoFinding(finding: DjangoSecurityFinding): SecurityFinding {
+  return {
+    id: String(finding.id),
+    title: finding.title,
+    description: finding.description,
+    severity: finding.severity as SecurityFinding['severity'],
+    cvssScore: null,
+    cwe: finding.cwe_id || null,
+    assetId: String(finding.asset),
+    scannerSource: `Integration ${finding.integration}`,
+    importedAt: finding.imported_at,
+    status: finding.status as SecurityFinding['status'],
+    evidence: finding.evidence,
+    alertRef: finding.external_id,
+  };
+}
+
+type DjangoVulnerability = {
+  id: number;
+  finding: number;
+  title: string;
+  description: string;
+  severity: string;
+  impact: number;
+  likelihood: number;
+  risk_score: number;
+  risk_level: string;
+  status: string;
+  assigned_to: number | null;
+  due_date: string | null;
+  remediation_guidance: string;
+  created_at: string;
+  updated_at: string;
+};
+
+function mapDjangoVulnerability(
+  vulnerability: DjangoVulnerability
+): Vulnerability {
+  return {
+    id: String(vulnerability.id),
+    findingId: String(vulnerability.finding),
+    title: vulnerability.title,
+    description: vulnerability.description,
+
+    // Asset belongs to the related finding.
+    // We will resolve it from findingId in React.
+    assetId: '',
+
+    severity: vulnerability.severity as Vulnerability['severity'],
+    impact: vulnerability.impact,
+    likelihood: vulnerability.likelihood,
+    riskScore: vulnerability.risk_score,
+    riskLevel: vulnerability.risk_level as Vulnerability['riskLevel'],
+    status: vulnerability.status as Vulnerability['status'],
+
+    assignedTo: vulnerability.assigned_to
+      ? String(vulnerability.assigned_to)
+      : null,
+
+    dueDate: vulnerability.due_date,
+    discoveredAt: vulnerability.created_at,
+
+    // CWE belongs to the SecurityFinding, not Vulnerability.
+    cwe: null,
+
+    proposedFix: vulnerability.remediation_guidance,
+  };
+}
 async function fetchResource<T>(path: string, resource: string): Promise<T> {
   try {
     const res = await apiClient.get<T>(path);
@@ -187,20 +301,34 @@ export const api = {
 async getCurrentUser(): Promise<User> {
   return fetchResource<User>('auth/me/', 'current user');
 },
-  async getFindings(): Promise<SecurityFinding[]> {
-    if (USE_MOCK_DATA) return mockFindings;
-    return fetchResource<SecurityFinding[]>('findings/', 'findings');
-  },
+async getFindings(): Promise<SecurityFinding[]> {
+  if (USE_MOCK_DATA) return mockFindings;
 
+  const findings = await fetchResource<DjangoSecurityFinding[]>(
+    'findings/',
+    'findings'
+  );
+
+  return findings.map(mapDjangoFinding);
+},
   async getVulnerabilities(): Promise<Vulnerability[]> {
-    if (USE_MOCK_DATA) return mockVulnerabilities;
-    return fetchResource<Vulnerability[]>('vulnerabilities/', 'vulnerabilities');
-  },
+  if (USE_MOCK_DATA) return mockVulnerabilities;
 
-  async getAssets(): Promise<Asset[]> {
-    if (USE_MOCK_DATA) return mockAssets;
-    return fetchResource<Asset[]>('assets/', 'assets');
-  },
+  const vulnerabilities =
+    await fetchResource<DjangoVulnerability[]>(
+      'vulnerabilities/',
+      'vulnerabilities'
+    );
+
+  return vulnerabilities.map(mapDjangoVulnerability);
+},
+async getAssets(): Promise<Asset[]> {
+  if (USE_MOCK_DATA) return mockAssets;
+
+  const assets = await fetchResource<DjangoAsset[]>('assets/', 'assets');
+
+  return assets.map(mapDjangoAsset);
+},
 
   async getRemediationTasks(): Promise<RemediationTask[]> {
     if (USE_MOCK_DATA) return mockRemediation;

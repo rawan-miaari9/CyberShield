@@ -60,7 +60,17 @@ export const FindingsPage: React.FC = () => {
                   <td className="px-5 py-4 text-slate-300 text-[13px]">{assetById(f.assetId)?.name || f.assetId}</td>
                   <td className="px-5 py-4 text-slate-400 text-[13px]">{f.scannerSource}</td>
                   <td className="px-5 py-4 text-slate-300 text-[13px]">{f.status}</td>
-                  <td className="px-5 py-4 text-slate-400 text-[13px]"><Mono>{f.importedAt}</Mono></td>
+                  <td className="px-5 py-4 text-slate-400 text-[13px]">
+                    <Mono>
+                      {new Date(f.importedAt).toLocaleString(undefined, {
+                        year: 'numeric',
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </Mono>
+                  </td>
                 </tr>
               ))}
             </tbody>

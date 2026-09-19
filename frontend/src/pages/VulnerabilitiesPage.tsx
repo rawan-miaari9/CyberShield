@@ -4,7 +4,7 @@ import { useApp } from '../context/SecurityContext';
 import { Card, PageHeader, SeverityBadge, EmptyState, Mono, inputClass } from '../components/ui';
 
 export const VulnerabilitiesPage: React.FC = () => {
-  const { vulnerabilities, assetById, userById } = useApp();
+  const { vulnerabilities, findings, assetById, userById } = useApp();
   const [search, setSearch] = useState('');
   const [sev, setSev] = useState('all');
   const [status, setStatus] = useState('all');
@@ -16,8 +16,7 @@ export const VulnerabilitiesPage: React.FC = () => {
   }), [vulnerabilities, search, sev, status]);
 
   const riskColor = (r: string) =>
-    r === 'Critical' ? 'text-rose-300' : r === 'High' ? 'text-orange-300' : r === 'Medium' ? 'text-amber-300' : 'text-emerald-300';
-
+    r === 'CRITICAL' ? 'text-rose-300' : r === 'HIGH' ? 'text-orange-300' : r === 'MEDIUM' ? 'text-amber-300' : 'text-emerald-300';
   return (
     <div>
       <PageHeader title="Vulnerabilities" subtitle="Managed vulnerabilities with Risk = Impact × Likelihood (1–5 each). Open an item to assess, assign, and track it." />
@@ -63,7 +62,14 @@ export const VulnerabilitiesPage: React.FC = () => {
                   <td className="px-5 py-4"><Link to={`/vulnerabilities/${v.id}`} className="font-mono-code text-[13px] text-cyan-300 hover:underline">{v.id}</Link></td>
                   <td className="px-5 py-4 text-slate-100 max-w-xs truncate"><Link to={`/vulnerabilities/${v.id}`} className="hover:text-cyan-200">{v.title}</Link></td>
                   <td className="px-5 py-4"><SeverityBadge severity={v.severity} /></td>
-                  <td className="px-5 py-4 text-slate-300 text-[13px]">{assetById(v.assetId)?.name}</td>
+                  <td className="px-5 py-4 text-slate-300 text-[13px]">
+                    {(() => {
+                      const finding = findings.find((f) => f.id === v.findingId);
+                      return finding
+                        ? assetById(finding.assetId)?.name || finding.assetId
+                        : '—';
+                    })()}
+                  </td>
                   <td className="px-5 py-4 text-[13px]"><Mono className={riskColor(v.riskLevel)}>{v.riskScore} · {v.riskLevel}</Mono></td>
                   <td className="px-5 py-4 text-slate-300 text-[13px]">{v.status.replace('_', ' ')}</td>
                   <td className="px-5 py-4 text-slate-300 text-[13px]">{userById(v.assignedTo)?.name || '—'}</td>
