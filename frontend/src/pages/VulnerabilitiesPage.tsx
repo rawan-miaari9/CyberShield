@@ -1,10 +1,10 @@
 import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useApp } from '../context/SecurityContext';
-import { Card, PageHeader, SeverityBadge, EmptyState, Mono, inputClass } from '../components/ui';
+import { Card, PageHeader, SeverityBadge, EmptyState, LoadingState, Mono, inputClass } from '../components/ui';
 
 export const VulnerabilitiesPage: React.FC = () => {
-  const { vulnerabilities, findings, assetById, userById } = useApp();
+  const { vulnerabilities, findings, assetById, userById, isLoading } = useApp();
   const [search, setSearch] = useState('');
   const [sev, setSev] = useState('all');
   const [status, setStatus] = useState('all');
@@ -78,7 +78,7 @@ export const VulnerabilitiesPage: React.FC = () => {
               ))}
             </tbody>
           </table>
-          {filtered.length === 0 && <EmptyState title="No vulnerabilities match" hint="Adjust your search or filters." />}
+          {isLoading ? <LoadingState title="Loading vulnerabilities…" /> : filtered.length === 0 && <EmptyState title="No vulnerabilities match" hint="Adjust your search or filters." />}
         </div>
       </Card>
     </div>

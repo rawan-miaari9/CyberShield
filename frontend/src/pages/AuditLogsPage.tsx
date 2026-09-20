@@ -1,9 +1,35 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { useApp } from '../context/SecurityContext';
-import { Card, PageHeader, EmptyState, Mono } from '../components/ui';
+import { Card, PageHeader, EmptyState, LoadingState, Mono } from '../components/ui';
+
+function formatWhen(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
 
 export const AuditLogsPage: React.FC = () => {
-  const { auditLogs } = useApp();
+  const { auditLogs, user, isLoading } = useApp();
+  const canView = user?.role === 'Administrator' || user?.role === 'Security Analyst';
+  if (!canView) {
+    return (
+      <div>
+        <PageHeader title="Audit Logs" subtitle="Read-only operational trail of who changed what, and when." />
+        <Card className="p-10 text-center">
+          <p className="text-[15.5px] font-semibold text-slate-200">Access denied</p>
+          <p className="text-sm text-slate-500 mt-1.5">Audit Logs require the Security Analyst or Administrator role.</p>
+          <Link to="/dashboard" className="text-sm text-cyan-300 hover:underline mt-4 inline-block">← Back to dashboard</Link>
+        </Card>
+      </div>
+    );
+  }
   return (
     <div>
       <PageHeader title="Audit Logs" subtitle="Read-only operational trail of who changed what, and when." />
@@ -22,7 +48,7 @@ export const AuditLogsPage: React.FC = () => {
             <tbody className="divide-y divide-slate-800/70">
               {auditLogs.map((a) => (
                 <tr key={a.id} className="hover:bg-slate-800/30">
-                  <td className="px-5 py-4 text-slate-400 text-[13px]"><Mono>{a.timestamp}</Mono></td>
+                  <td className="px-5 py-4 text-slate-400 text-[13px]"><Mono>{formatWhen(a.timestamp)}</Mono></td>
                   <td className="px-5 py-4 text-slate-200 text-[13px]">{a.user}</td>
                   <td className="px-5 py-4 text-slate-200 text-[13px]">{a.action.replace(/_/g, ' ')}</td>
                   <td className="px-5 py-4 text-[13px]"><span className="text-slate-400">{a.entityType} </span><Mono className="text-cyan-300">{a.entityId}</Mono></td>
@@ -31,7 +57,7 @@ export const AuditLogsPage: React.FC = () => {
               ))}
             </tbody>
           </table>
-          {auditLogs.length === 0 && <EmptyState title="No audit events" hint="Actions will appear here." />}
+          {isLoading ? <LoadingState title="Loading audit logs…" /> : auditLogs.length === 0 && <EmptyState title="No audit events" hint="Actions will appear here." />}
         </div>
       </Card>
     </div>

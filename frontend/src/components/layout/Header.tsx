@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Bell, LogOut, Menu, X, Search, ChevronRight } from 'lucide-react';
 import { useApp } from '../../context/SecurityContext';
@@ -18,10 +18,36 @@ const titles: Record<string, { title: string; crumb: string }> = {
 };
 
 export const Header: React.FC = () => {
-  const { unreadCount, user, logout } = useApp();
+  const { unreadCount, notifications, markNotificationRead, markAllNotificationsRead, user, logout } = useApp();
   const location = useLocation();
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [bellOpen, setBellOpen] = useState(false);
+  const [bellErr, setBellErr] = useState<string | null>(null);
+  const bellRef = useRef<HTMLDivElement | null>(null);
+
+  // Close the popover on outside click, Escape, or route change.
+  useEffect(() => {
+    if (!bellOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (bellRef.current && !bellRef.current.contains(e.target as Node)) setBellOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setBellOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [bellOpen]);
+
+  useEffect(() => {
+    setBellOpen(false);
+  }, [location.pathname]);
+
+  const latest = notifications.slice(0, 5);
   const displayName = user
   ? `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username
   : 'CyberShield';
@@ -73,18 +99,98 @@ const initials = displayName
           <kbd className="text-[11px] px-1.5 py-0.5 rounded-md bg-white/5 border border-white/10 text-slate-500 shrink-0">⌘K</kbd>
         </div>
 
-        <Link
-          to="/notifications"
-          className="relative p-3 rounded-xl bg-white/[0.03] hover:bg-white/[0.06] border border-slate-800 text-slate-300 hover:text-white transition-colors"
-          aria-label="Notifications"
-        >
-          <Bell className="w-5 h-5" />
-          {unreadCount > 0 && (
-            <span className="absolute -top-1.5 -right-1.5 min-w-[22px] h-[22px] px-1.5 rounded-full bg-cyan-600 text-white text-[12.5px] font-bold flex items-center justify-center">
-              {unreadCount}
-            </span>
+        <div className="relative" ref={bellRef}>
+          <button
+            type="button"
+            onClick={() => {
+              setBellErr(null);
+              setBellOpen((o) => !o);
+            }}
+            className="relative p-3 rounded-xl bg-white/[0.03] hover:bg-white/[0.06] border border-slate-800 text-slate-300 hover:text-white transition-colors"
+            aria-label="Notifications"
+            aria-expanded={bellOpen}
+          >
+            <Bell className="w-5 h-5" />
+            {unreadCount > 0 && (
+              <span className="absolute -top-1.5 -right-1.5 min-w-[22px] h-[22px] px-1.5 rounded-full bg-cyan-600 text-white text-[12.5px] font-bold flex items-center justify-center">
+                {unreadCount}
+              </span>
+            )}
+          </button>
+
+          {bellOpen && (
+            <div className="absolute right-0 top-full mt-2 w-[340px] max-w-[calc(100vw-2rem)] rounded-2xl border border-slate-800 bg-[#0e1626] shadow-2xl shadow-black/50 overflow-hidden z-50">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800/80">
+                <p className="text-sm font-semibold text-white">
+                  Notifications{unreadCount > 0 && <span className="ml-2 text-xs font-medium text-cyan-300">{unreadCount} unread</span>}
+                </p>
+                {unreadCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setBellErr(null);
+                      try {
+                        await markAllNotificationsRead();
+                      } catch (e) {
+                        setBellErr(e instanceof Error ? e.message : 'Update failed.');
+                      }
+                    }}
+                    className="text-xs text-cyan-300 hover:text-cyan-200 hover:underline"
+                  >
+                    Mark all read
+                  </button>
+                )}
+              </div>
+
+              {bellErr && <p className="px-4 py-2 text-xs text-rose-300 bg-rose-500/10 border-b border-rose-500/20">{bellErr}</p>}
+
+              <div className="max-h-[320px] overflow-y-auto divide-y divide-slate-800/70">
+                {latest.map((n) => (
+                  <div key={n.id} className="px-4 py-3 flex items-start gap-3 hover:bg-white/[0.02]">
+                    <span className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${n.read ? 'bg-slate-700' : 'bg-cyan-400'}`} />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setBellOpen(false);
+                        if (n.link) navigate(n.link);
+                        else navigate('/notifications');
+                      }}
+                      className="flex-1 min-w-0 text-left"
+                    >
+                      <p className="text-[13.5px] font-medium text-slate-100 truncate">{n.title}</p>
+                      <p className="text-[13px] text-slate-400 truncate mt-0.5">{n.message}</p>
+                    </button>
+                    {!n.read && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          setBellErr(null);
+                          try {
+                            await markNotificationRead(n.id);
+                          } catch (e) {
+                            setBellErr(e instanceof Error ? e.message : 'Update failed.');
+                          }
+                        }}
+                        className="text-[11.5px] text-slate-500 hover:text-cyan-300 shrink-0 mt-0.5"
+                      >
+                        Mark read
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {latest.length === 0 && <p className="px-4 py-8 text-center text-sm text-slate-500">No notifications.</p>}
+              </div>
+
+              <Link
+                to="/notifications"
+                onClick={() => setBellOpen(false)}
+                className="block px-4 py-3 text-center text-[13.5px] font-medium text-cyan-300 hover:text-cyan-200 hover:bg-white/[0.02] border-t border-slate-800/80"
+              >
+                View all notifications →
+              </Link>
+            </div>
           )}
-        </Link>
+        </div>
 
         <div className="hidden sm:flex items-center gap-3 pl-4 border-l border-slate-800">
           <div className="w-11 h-11 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-[15px] font-semibold text-slate-200">

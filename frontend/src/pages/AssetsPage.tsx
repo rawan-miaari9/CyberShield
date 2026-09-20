@@ -2,10 +2,10 @@ import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Server } from 'lucide-react';
 import { useApp } from '../context/SecurityContext';
-import { Card, PageHeader, SeverityBadge, EmptyState, Mono, inputClass } from '../components/ui';
+import { Card, PageHeader, SeverityBadge, EmptyState, LoadingState, Mono, inputClass } from '../components/ui';
 
 export const AssetsPage: React.FC = () => {
-  const { assets, findings, vulnerabilities } = useApp();
+  const { assets, findings, vulnerabilities, isLoading } = useApp();
   const [search, setSearch] = useState('');
   const [type, setType] = useState('all');
 
@@ -59,7 +59,7 @@ export const AssetsPage: React.FC = () => {
           );
         })}
       </div>
-      {filtered.length === 0 && <Card className="mt-6"><EmptyState title="No assets match" hint="Adjust your search." /></Card>}
+      {isLoading ? <Card className="mt-6"><LoadingState title="Loading assets…" /></Card> : filtered.length === 0 && <Card className="mt-6"><EmptyState title="No assets match" hint="Adjust your search." /></Card>}
     </div>
   );
 };

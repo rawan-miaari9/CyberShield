@@ -46,7 +46,8 @@ const sections: Array<{ heading: string; items: Array<{ to: string; label: strin
 ];
 
 export const Sidebar: React.FC = () => {
-  const { unreadCount, vulnerabilities } = useApp();
+  const { unreadCount, vulnerabilities, user } = useApp();
+  const canViewAuditLogs = user?.role === 'Administrator' || user?.role === 'Security Analyst';
   const criticalOpen = vulnerabilities.filter(
     (v) => v.severity === 'critical' && !['VERIFIED', 'CLOSED'].includes(v.status),
   ).length;
@@ -80,7 +81,7 @@ export const Sidebar: React.FC = () => {
               {section.heading}
             </div>
             <div className="space-y-1">
-              {section.items.map((item) => {
+              {section.items.filter((item) => item.to !== '/audit-logs' || canViewAuditLogs).map((item) => {
                 const badge = badgeFor(item.to);
                 const isAI = item.accent === 'ai';
                 return (

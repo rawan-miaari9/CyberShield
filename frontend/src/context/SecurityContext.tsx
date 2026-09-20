@@ -29,14 +29,16 @@ interface AppContextType {
   isLoading: boolean;
   apiError: string | null;
   isDemoMode: boolean;
-  markNotificationRead: (id: string) => void;
-  markAllNotificationsRead: () => void;
-  updateFindingStatus: (id: string, status: SecurityFinding['status']) => void;
+  authReady: boolean;
+  markNotificationRead: (id: string) => Promise<void>;
+  markAllNotificationsRead: () => Promise<void>;
+  updateFindingStatus: (id: string, status: SecurityFinding['status']) => Promise<void>;
   promoteFinding: (id: string, impact: number, likelihood: number) => Promise<string>;
   updateVulnerabilityStatus: (id: string, status: Vulnerability['status']) => Promise<void>;
   assignVulnerability: (id: string, userId: string | null) => Promise<void>;
   updateVulnerabilityDueDate: (id: string, dueDate: string) => Promise<void>;
   verifyVulnerability: (id: string) => Promise<void>;
+  saveRemediation: (vulnerabilityId: string, input: { notes: string; proposedFix: string }) => Promise<void>;
   updateRemediationStatus: (id: string, status: RemediationTask['status']) => void;
   syncScanner: (id: string) => Promise<number>;
   unreadCount: number;
@@ -88,9 +90,63 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [users, setUsers] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+
+  // Auth restoration: distinguish "still restoring" from "unauthenticated".
+  // Runs once on startup; data fetching below waits for authReady.
+  useEffect(() => {
+    let cancelled = false;
+    const restore = async () => {
+      if (USE_MOCK_DATA) {
+        setAuthReady(true);
+        return;
+      }
+      const stored = localStorage.getItem('cybershield_token');
+      if (!stored) {
+        setAuthReady(true);
+        return;
+      }
+      try {
+        // Attaches the stored token (refreshing it if expired) and returns
+        // the current user; failure means the session is genuinely invalid.
+        const me = await api.getCurrentUser();
+        if (!cancelled) setUser(me);
+      } catch {
+        if (!cancelled) {
+          setUser(null);
+          setToken(null);
+          localStorage.removeItem('cybershield_token');
+          localStorage.removeItem('cybershield_refresh_token');
+          localStorage.removeItem('cybershield_user');
+        }
+      } finally {
+        if (!cancelled) setAuthReady(true);
+      }
+    };
+    restore();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
-    let mounted = true;
+    // Never fire authenticated requests before auth is restored, or when
+    // there is no session at all (avoids false 401/403 noise).
+    if (!authReady) return;
+    if (!token) {
+      setFindings([]);
+      setVulnerabilities([]);
+      setAssets([]);
+      setRemediation([]);
+      setIntegrations([]);
+      setNotifications([]);
+      setAuditLogs([]);
+      setUsers([]);
+      setApiError(null);
+      setIsLoading(false);
+      return;
+    }
+    let cancelled = false;
     const load = async () => {
       setIsLoading(true);
       setApiError(null);
@@ -105,7 +161,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           api.getAuditLogs(),
           api.getUsers(),
         ]);
-        if (!mounted) return;
+        if (cancelled) return;
         const names = ['findings', 'vulnerabilities', 'assets', 'remediation tasks', 'integrations', 'notifications', 'audit logs', 'users'];
         const errors: string[] = [];
         const values: Array<unknown> = results.map((r, i) => {
@@ -129,14 +185,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           setApiError(errors.join(' '));
         }
       } finally {
-        if (mounted) setIsLoading(false);
+        if (!cancelled) setIsLoading(false);
       }
     };
     load();
     return () => {
-      mounted = false;
+      cancelled = true;
     };
-  }, []);
+  }, [authReady, token]);
 
 const login = useCallback(async (username: string, password: string) => {
   const result = await api.login(username, password);
@@ -158,22 +214,54 @@ const login = useCallback(async (username: string, password: string) => {
     localStorage.removeItem('cybershield_token');
     localStorage.removeItem('cybershield_refresh_token');
     localStorage.removeItem('cybershield_user');
+    // The token-gated load effect clears domain state on token loss.
   }, []);
 
-  const markNotificationRead = useCallback((id: string) => {
-    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
+  // Day 6: server owns audit + workflow notifications, so after each
+  // persisted action we best-effort refresh both lists. Failures are
+  // swallowed so unrelated endpoint errors never wipe existing state.
+  const refreshAuditLogs = useCallback(async () => {
+    try {
+      const logs = await api.getAuditLogs();
+      setAuditLogs(logs);
+    } catch {
+      /* keep existing */
+    }
   }, []);
 
-  const markAllNotificationsRead = useCallback(() => {
+  const refreshNotifications = useCallback(async () => {
+    try {
+      const items = await api.getNotifications();
+      setNotifications(items);
+    } catch {
+      /* keep existing */
+    }
+  }, []);
+
+  const markNotificationRead = useCallback(async (id: string) => {
+    const updated = await api.markNotificationRead(id);
+    setNotifications((prev) => prev.map((n) => (n.id === id ? updated : n)));
+  }, []);
+
+  const markAllNotificationsRead = useCallback(async () => {
+    await api.markAllNotificationsRead();
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
   }, []);
 
   const updateFindingStatus = useCallback(
-    (id: string, status: SecurityFinding['status']) => {
+    async (id: string, status: SecurityFinding['status']) => {
+      // Day 6: REVIEWED persists via the backend (server-audited as
+      // FINDING_REVIEWED). Other local states have no backend endpoint.
+      if (status === 'Reviewed') {
+        const updated = await api.reviewFinding(id);
+        setFindings((prev) => prev.map((f) => (f.id === id ? updated : f)));
+        await refreshAuditLogs();
+        return;
+      }
       setFindings((prev) => prev.map((f) => (f.id === id ? { ...f, status } : f)));
       appendAudit(setAuditLogs, user?.email || 'unknown', 'FINDING_STATUS_CHANGE', 'SecurityFinding', id, null, status);
     },
-    [user],
+    [user, refreshAuditLogs],
   );
 
   const promoteFinding = useCallback(
@@ -181,7 +269,7 @@ const login = useCallback(async (username: string, password: string) => {
       const finding = findings.find((f) => f.id === id);
       if (!finding) return '';
       const vuln = await api.promoteFinding(id, impact, likelihood);
-    
+
       setVulnerabilities((prev) => [vuln, ...prev]);
       setFindings((prev) => prev.map((f) => (f.id === id ? { ...f, status: 'Promoted' as const } : f)));
       setNotifications((prev) => [
@@ -197,32 +285,26 @@ const login = useCallback(async (username: string, password: string) => {
         ...prev,
       ]);
 
-      appendAudit(
-        setAuditLogs,
-        user?.email || 'unknown',
-        'FINDING_PROMOTE',
-        'SecurityFinding',
-        id,
-        finding.status,
-        `Promoted -> ${vuln.id}`
-      );
+      // Day 6: FINDING_PROMOTED is audited server-side (single record).
+      await refreshAuditLogs();
       return vuln.id;
     },
-    [findings, assets, vulnerabilities.length, user],
+    [findings, assets, vulnerabilities.length, refreshAuditLogs],
   );
 
   const updateVulnerabilityStatus = useCallback(
     async (id: string, status: Vulnerability['status']) => {
-      const previous = vulnerabilities.find((v) => v.id === id);
       // REMEDIATED -> VERIFIED keeps using the dedicated verify endpoint
       // so the existing Mark-verified behavior is preserved.
       const updated = status === 'VERIFIED'
         ? await api.verifyVulnerability(id)
         : await api.transitionVulnerability(id, status);
       setVulnerabilities((prev) => prev.map((v) => (v.id === id ? updated : v)));
-      appendAudit(setAuditLogs, user?.email || 'unknown', 'VULNERABILITY_STATUS_CHANGE', 'Vulnerability', id, previous?.status ?? null, status);
+      // Day 6: status changes are audited + notified server-side.
+      await refreshAuditLogs();
+      await refreshNotifications();
     },
-    [user, vulnerabilities],
+    [refreshAuditLogs, refreshNotifications],
   );
 
   const assignVulnerability = useCallback(
@@ -234,9 +316,11 @@ const login = useCallback(async (username: string, password: string) => {
       setVulnerabilities((prev) =>
         prev.map((v) => (v.id === id ? updated : v)),
       );
-      appendAudit(setAuditLogs, user?.email || 'unknown', 'VULNERABILITY_ASSIGN', 'Vulnerability', id, null, userId);
+      // Day 6: assignment is audited + notified server-side.
+      await refreshAuditLogs();
+      await refreshNotifications();
     },
-    [user],
+    [refreshAuditLogs, refreshNotifications],
   );
 
   const updateVulnerabilityDueDate = useCallback(
@@ -248,9 +332,10 @@ const login = useCallback(async (username: string, password: string) => {
       setVulnerabilities((prev) =>
         prev.map((v) => (v.id === id ? updated : v)),
       );
-      appendAudit(setAuditLogs, user?.email || 'unknown', 'VULNERABILITY_DUE_DATE', 'Vulnerability', id, null, dueDate);
+      // Day 6: due-date change is audited server-side.
+      await refreshAuditLogs();
     },
-    [user],
+    [refreshAuditLogs],
   );
 
   const verifyVulnerability = useCallback(
@@ -259,9 +344,29 @@ const login = useCallback(async (username: string, password: string) => {
       setVulnerabilities((prev) =>
         prev.map((v) => (v.id === id ? updated : v)),
       );
-      appendAudit(setAuditLogs, user?.email || 'unknown', 'VULNERABILITY_VERIFY', 'Vulnerability', id, null, 'VERIFIED');
+      // Day 6: verification is audited + notified server-side.
+      await refreshAuditLogs();
+      await refreshNotifications();
     },
-    [user],
+    [refreshAuditLogs, refreshNotifications],
+  );
+
+  const saveRemediation = useCallback(
+    async (vulnerabilityId: string, input: { notes: string; proposedFix: string }) => {
+      const existing = remediation.find((r) => r.vulnerabilityId === vulnerabilityId);
+      const saved = existing
+        ? await api.updateRemediationTask(existing.id, input)
+        : await api.createRemediationTask({ vulnerabilityId, ...input });
+      setRemediation((prev) => {
+        if (prev.some((r) => r.id === saved.id)) {
+          return prev.map((r) => (r.id === saved.id ? saved : r));
+        }
+        return [saved, ...prev];
+      });
+      // Day 6: remediation create/update is audited server-side.
+      await refreshAuditLogs();
+    },
+    [remediation, refreshAuditLogs],
   );
 
   const updateRemediationStatus = useCallback(
@@ -304,11 +409,11 @@ const login = useCallback(async (username: string, password: string) => {
       user, token, login, logout, findings, vulnerabilities, assets, remediation, integrations,
       notifications, auditLogs, users, isLoading, apiError, isDemoMode: USE_MOCK_DATA, markNotificationRead, markAllNotificationsRead,
       updateFindingStatus, promoteFinding, updateVulnerabilityStatus, assignVulnerability,
-      updateVulnerabilityDueDate, verifyVulnerability, updateRemediationStatus, syncScanner,
+      updateVulnerabilityDueDate, verifyVulnerability, saveRemediation, updateRemediationStatus, syncScanner,
       unreadCount: notifications.filter((n) => !n.read).length,
-      assetById, userById,
+      assetById, userById, authReady,
     }),
-    [user, token, login, logout, findings, vulnerabilities, assets, remediation, integrations, notifications, auditLogs, users, isLoading, apiError, markNotificationRead, markAllNotificationsRead, updateFindingStatus, promoteFinding, updateVulnerabilityStatus, assignVulnerability, updateVulnerabilityDueDate, verifyVulnerability, updateRemediationStatus, syncScanner, assetById, userById],
+    [user, token, login, logout, findings, vulnerabilities, assets, remediation, integrations, notifications, auditLogs, users, isLoading, apiError, authReady, markNotificationRead, markAllNotificationsRead, updateFindingStatus, promoteFinding, updateVulnerabilityStatus, assignVulnerability, updateVulnerabilityDueDate, verifyVulnerability, saveRemediation, updateRemediationStatus, syncScanner, assetById, userById],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

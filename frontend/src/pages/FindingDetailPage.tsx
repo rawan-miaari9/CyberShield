@@ -2,16 +2,26 @@ import React, { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { useApp } from '../context/SecurityContext';
-import { Card, SeverityBadge, Field, Mono, buttonPrimary, buttonGhost } from '../components/ui';
+import { Card, SeverityBadge, Field, Mono, LoadingState, buttonPrimary, buttonGhost } from '../components/ui';
 
 export const FindingDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { findings, assetById, updateFindingStatus, promoteFinding } = useApp();
+  const { findings, assetById, updateFindingStatus, promoteFinding, isLoading } = useApp();
   const [msg, setMsg] = useState<string | null>(null);
+  const [statusErr, setStatusErr] = useState<string | null>(null);
   const [impact, setImpact] = useState<number>(3);
   const [likelihood, setLikelihood] = useState<number>(3);
   const finding = findings.find((f) => f.id === id);
+
+  if (isLoading && !finding) {
+    return (
+      <div>
+        <Link to="/findings" className="text-sm text-cyan-300 hover:underline">← Back to findings</Link>
+        <Card className="p-10 mt-6 text-center text-slate-400"><LoadingState title="Loading finding…" /></Card>
+      </div>
+    );
+  }
 
   if (!finding) {
     return (
@@ -71,9 +81,17 @@ const handlePromote = async () => {
               {asset ? <Link to={`/assets/${asset.id}`} className="text-cyan-300 hover:underline">{asset.name}</Link> : finding.assetId}
             </Field>
             <Field label="Status">
+              {statusErr && <div className="mb-2 p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-sm text-rose-300">{statusErr}</div>}
               <div className="flex flex-wrap gap-2 mt-1">
                 {(['New', 'Reviewed', 'Ignored'] as const).map((s) => (
-                  <button key={s} onClick={() => updateFindingStatus(finding.id, s)} className={`${buttonGhost} !px-3 !py-1.5 !text-xs ${finding.status === s ? '!border-cyan-500/50 !text-cyan-300' : ''}`}>{s}</button>
+                  <button key={s} onClick={async () => {
+                    setStatusErr(null);
+                    try {
+                      await updateFindingStatus(finding.id, s);
+                    } catch (e) {
+                      setStatusErr(e instanceof Error ? e.message : 'Status update failed.');
+                    }
+                  }} className={`${buttonGhost} !px-3 !py-1.5 !text-xs ${finding.status === s ? '!border-cyan-500/50 !text-cyan-300' : ''}`}>{s}</button>
                 ))}
               </div>
             </Field>

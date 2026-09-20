@@ -218,6 +218,116 @@ type DjangoVulnerability = {
   updated_at: string;
 };
 
+// Day 6: backend RemediationTask <-> frontend RemediationTask mapping.
+// No second lifecycle: backend OPEN/IN_PROGRESS/COMPLETED/CANCELLED map to
+// the closest frontend display states; fix info lives in description.
+function mapDjangoRemediationStatus(s: string): RemediationTask['status'] {
+  const u = String(s || '').toUpperCase();
+  if (u === 'IN_PROGRESS') return 'In Progress';
+  if (u === 'COMPLETED') return 'Completed';
+  return 'To Do';
+}
+
+function mapFrontendRemediationStatus(s: RemediationTask['status']): string {
+  if (s === 'In Progress' || s === 'Remediated' || s === 'Awaiting Verification') return 'IN_PROGRESS';
+  if (s === 'Completed') return 'COMPLETED';
+  return 'OPEN';
+}
+
+type DjangoRemediation = {
+  id: number;
+  vulnerability: number;
+  title: string;
+  description: string;
+  assigned_to: number | null;
+  status: string;
+  due_date: string | null;
+  notes: string;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+function mapDjangoRemediation(task: DjangoRemediation): RemediationTask {
+  return {
+    id: String(task.id),
+    vulnerabilityId: String(task.vulnerability),
+    assignedTo: task.assigned_to ? String(task.assigned_to) : null,
+    status: mapDjangoRemediationStatus(task.status),
+    dueDate: task.due_date,
+    notes: task.notes || '',
+    proposedFix: task.description || '',
+    verificationNotes: '',
+    createdAt: task.created_at,
+    updatedAt: task.updated_at,
+  };
+}
+
+type DjangoNotification = {
+  id: number;
+  recipient: number;
+  notification_type: string;
+  title: string;
+  message: string;
+  vulnerability: number | null;
+  is_read: boolean;
+  created_at: string;
+};
+
+function mapDjangoNotification(n: DjangoNotification): AppNotification {
+  const t = String(n.notification_type || '').toUpperCase();
+  const type = (
+    t === 'ASSIGNMENT' ? 'assigned'
+    : t === 'REMEDIATION' ? 'submitted_verification'
+    : t === 'SCANNER_SYNC' ? 'scanner_sync'
+    : 'verified'
+  ) as AppNotification['type'];
+  return {
+    id: String(n.id),
+    title: n.title,
+    message: n.message,
+    type,
+    read: !!n.is_read,
+    createdAt: n.created_at,
+    link: n.vulnerability ? `/vulnerabilities/${n.vulnerability}` : null,
+  };
+}
+
+type DjangoAuditLog = {
+  id: number;
+  actor: number | null;
+  actor_name: string;
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  old_value: unknown;
+  new_value: unknown;
+  created_at: string;
+};
+
+function auditValue(v: unknown): string | null {
+  if (v === null || v === undefined) return null;
+  if (typeof v === 'string') return v;
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return String(v);
+  }
+}
+
+function mapDjangoAuditLog(a: DjangoAuditLog): AuditLog {
+  return {
+    id: String(a.id),
+    timestamp: a.created_at,
+    user: a.actor_name || (a.actor ? `User ${a.actor}` : 'system'),
+    action: a.action,
+    entityType: a.entity_type,
+    entityId: String(a.entity_id),
+    oldValue: auditValue(a.old_value),
+    newValue: auditValue(a.new_value),
+  };
+}
+
 function mapDjangoVulnerability(
   vulnerability: DjangoVulnerability
 ): Vulnerability {
@@ -342,11 +452,15 @@ async getFindings(): Promise<SecurityFinding[]> {
 },
 
 async reviewFinding(id: string): Promise<SecurityFinding> {
-  const finding = await apiClient.post<DjangoSecurityFinding>(
-    `findings/${id}/review/`
-  );
+  try {
+    const finding = await apiClient.post<DjangoSecurityFinding>(
+      `findings/${id}/review/`
+    );
 
-  return mapDjangoFinding(finding.data);
+    return mapDjangoFinding(finding.data);
+  } catch (err) {
+    throw toApiError(err, 'finding review');
+  }
 },
 
 async promoteFinding(
@@ -444,7 +558,42 @@ async getAssets(): Promise<Asset[]> {
 
   async getRemediationTasks(): Promise<RemediationTask[]> {
     if (USE_MOCK_DATA) return mockRemediation;
-    return fetchResource<RemediationTask[]>('remediation/', 'remediation tasks');
+    const tasks = await fetchResource<DjangoRemediation[]>('remediation/', 'remediation tasks');
+    return tasks.map(mapDjangoRemediation);
+  },
+
+  async createRemediationTask(input: {
+    vulnerabilityId: string;
+    notes: string;
+    proposedFix: string;
+  }): Promise<RemediationTask> {
+    try {
+      const res = await apiClient.post<DjangoRemediation>('remediation/', {
+        vulnerability: Number(input.vulnerabilityId),
+        title: `Remediation for vulnerability ${input.vulnerabilityId}`,
+        description: input.proposedFix,
+        notes: input.notes,
+        status: 'OPEN',
+      });
+      return mapDjangoRemediation(res.data);
+    } catch (err) {
+      throw toApiError(err, 'remediation create');
+    }
+  },
+
+  async updateRemediationTask(
+    id: string,
+    input: { notes: string; proposedFix: string }
+  ): Promise<RemediationTask> {
+    try {
+      const res = await apiClient.patch<DjangoRemediation>(`remediation/${id}/`, {
+        description: input.proposedFix,
+        notes: input.notes,
+      });
+      return mapDjangoRemediation(res.data);
+    } catch (err) {
+      throw toApiError(err, 'remediation update');
+    }
   },
 
   async getIntegrations(): Promise<ScannerIntegration[]> {
@@ -454,12 +603,32 @@ async getAssets(): Promise<Asset[]> {
 
   async getNotifications(): Promise<AppNotification[]> {
     if (USE_MOCK_DATA) return mockNotifications;
-    return fetchResource<AppNotification[]>('notifications/', 'notifications');
+    const items = await fetchResource<DjangoNotification[]>('notifications/', 'notifications');
+    return items.map(mapDjangoNotification);
+  },
+
+  async markNotificationRead(id: string): Promise<AppNotification> {
+    try {
+      const res = await apiClient.post<DjangoNotification>(`notifications/${id}/read/`, {});
+      return mapDjangoNotification(res.data);
+    } catch (err) {
+      throw toApiError(err, 'notification update');
+    }
+  },
+
+  async markAllNotificationsRead(): Promise<number> {
+    try {
+      const res = await apiClient.post<{ marked?: number }>('notifications/mark-all-read/', {});
+      return typeof res.data?.marked === 'number' ? res.data.marked : 0;
+    } catch (err) {
+      throw toApiError(err, 'notification update');
+    }
   },
 
   async getAuditLogs(): Promise<AuditLog[]> {
     if (USE_MOCK_DATA) return mockAuditLogs;
-    return fetchResource<AuditLog[]>('audit-logs/', 'audit logs');
+    const logs = await fetchResource<DjangoAuditLog[]>('audit-logs/', 'audit logs');
+    return logs.map(mapDjangoAuditLog);
   },
 
   async getUsers(): Promise<User[]> {

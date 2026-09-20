@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useApp } from '../context/SecurityContext';
-import { Card, PageHeader, EmptyState, Mono, inputClass } from '../components/ui';
+import { Card, PageHeader, EmptyState, LoadingState, Mono, inputClass } from '../components/ui';
 
 export const RemediationPage: React.FC = () => {
-  const { remediation, vulnerabilities, userById } = useApp();
+  const { remediation, vulnerabilities, userById, isLoading } = useApp();
   const [status, setStatus] = useState('all');
   const filtered = remediation.filter((r) => status === 'all' || r.status === status);
   const titleFor = (vid: string) => vulnerabilities.find((v) => v.id === vid)?.title || vid;
@@ -49,7 +49,7 @@ export const RemediationPage: React.FC = () => {
               ))}
             </tbody>
           </table>
-          {filtered.length === 0 && <EmptyState title="No tasks match" hint="Adjust the status filter." />}
+          {isLoading ? <LoadingState title="Loading remediation…" /> : filtered.length === 0 && <EmptyState title="No tasks match" hint="Adjust the status filter." />}
         </div>
       </Card>
     </div>

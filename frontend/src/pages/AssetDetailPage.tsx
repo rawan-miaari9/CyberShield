@@ -2,12 +2,21 @@ import React from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft, ArrowUpRight } from 'lucide-react';
 import { useApp } from '../context/SecurityContext';
-import { Card, PageHeader, SeverityBadge, Field, Mono, SectionTitle } from '../components/ui';
+import { Card, PageHeader, SeverityBadge, Field, Mono, LoadingState, SectionTitle } from '../components/ui';
 
 export const AssetDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
-  const { assets, findings, vulnerabilities } = useApp();
+  const { assets, findings, vulnerabilities, isLoading } = useApp();
   const asset = assets.find((a) => a.id === id);
+
+  if (isLoading && !asset) {
+    return (
+      <div>
+        <Link to="/assets" className="text-[15px] text-cyan-400 hover:underline">← Back to assets</Link>
+        <Card className="p-10 mt-6 text-center text-slate-400"><LoadingState title="Loading asset…" /></Card>
+      </div>
+    );
+  }
 
   if (!asset) {
     return (

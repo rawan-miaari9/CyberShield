@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AppProvider, useApp } from './context/SecurityContext';
+import { LoadingState } from './components/ui';
 import { AppLayout } from './components/layout/AppLayout';
 import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
@@ -20,7 +21,18 @@ import { UsersPage } from './pages/UsersPage';
 import { SettingsPage } from './pages/SettingsPage';
 
 const RequireAuth: React.FC<{ children: React.ReactElement }> = ({ children }) => {
-  const { user } = useApp();
+  const { user, authReady } = useApp();
+  // Don't decide until auth restoration finished: avoids a login redirect
+  // flash and unauthenticated API noise on hard refresh.
+  if (!authReady) {
+    return (
+      <div className="min-h-screen w-screen flex items-center justify-center bg-[#0b0f17]">
+        <div className="w-full max-w-md">
+          <LoadingState title="Restoring session…" hint="Checking authentication." />
+        </div>
+      </div>
+    );
+  }
   if (!user) return <Navigate to="/login" replace />;
   return children;
 };

@@ -80,6 +80,21 @@ export const Mono: React.FC<{ children: React.ReactNode; className?: string }> =
   <span className={`font-mono-code tracking-tight ${className}`}>{children}</span>
 );
 
+export const LoadingState: React.FC<{ title?: string; hint?: string }> = ({
+  title = 'Loading…',
+  hint = 'Fetching records from the API.',
+}) => (
+  <div className="p-12 text-center" role="status" aria-live="polite">
+    <div className="mx-auto w-11 h-11 rounded-xl bg-cyan-500/10 border border-cyan-500/25 text-cyan-300 flex items-center justify-center mb-4">
+      <svg className="animate-spin" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M21 12a9 9 0 1 1-6.2-8.56" strokeLinecap="round" />
+      </svg>
+    </div>
+    <p className="text-[15.5px] font-semibold text-slate-200">{title}</p>
+    <p className="text-sm text-slate-500 mt-1.5">{hint}</p>
+  </div>
+);
+
 export const EmptyState: React.FC<{ title: string; hint: string }> = ({ title, hint }) => (
   <div className="p-12 text-center">
     <div className="mx-auto w-11 h-11 rounded-xl bg-slate-800/70 border border-slate-700/60 flex items-center justify-center text-slate-500 mb-4">

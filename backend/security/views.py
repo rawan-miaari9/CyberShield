@@ -10,11 +10,21 @@ from rest_framework.response import Response
 
 from accounts.permissions import IsAdministratorOrSecurityAnalyst
 
-from .models import Asset, SecurityFinding, Vulnerability
+from .models import Asset, AuditLog, Notification, RemediationTask, SecurityFinding, Vulnerability
 from .serializers import (
     AssetSerializer,
+    AuditLogSerializer,
+    NotificationSerializer,
+    RemediationTaskSerializer,
     SecurityFindingSerializer,
     VulnerabilitySerializer,
+)
+from .workflow import (
+    analyst_user_ids,
+    is_analyst,
+    notify,
+    notify_many,
+    write_audit,
 )
 
 
@@ -45,8 +55,12 @@ class SecurityFindingViewSet(viewsets.ModelViewSet):
                 {'error': 'This finding has already been promoted.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+        old_status = finding.status
         finding.status = 'REVIEWED'
         finding.save()
+
+        # Day 6: server-side audit (single record for this action).
+        write_audit(request.user, 'FINDING_REVIEWED', 'SecurityFinding', finding.id, old_status, 'REVIEWED')
 
         serializer = self.get_serializer(finding)
         return Response(serializer.data)
@@ -101,6 +115,9 @@ class SecurityFindingViewSet(viewsets.ModelViewSet):
 
         finding.status = 'PROMOTED'
         finding.save()
+
+        # Day 6: server-side audit (single record for this action).
+        write_audit(request.user, 'FINDING_PROMOTED', 'SecurityFinding', finding.id, 'REVIEWED', f'PROMOTED -> Vulnerability {vulnerability.id}')
 
         serializer = VulnerabilitySerializer(vulnerability)
 
@@ -231,10 +248,25 @@ class VulnerabilityViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        old_assignee = vulnerability.assigned_to_id
+        old_status = vulnerability.status
         vulnerability.assigned_to = assignee
         if vulnerability.status == 'NEW':
             vulnerability.status = 'ASSIGNED'
         vulnerability.save()
+
+        # Day 6: server-side audit + notify the assigned developer.
+        write_audit(
+            request.user, 'VULNERABILITY_ASSIGNED', 'Vulnerability', vulnerability.id,
+            {'assigned_to': old_assignee, 'status': old_status},
+            {'assigned_to': assignee.id, 'status': vulnerability.status},
+        )
+        notify(
+            assignee.id, 'ASSIGNMENT',
+            f'Vulnerability {vulnerability.id} assigned to you',
+            f'{vulnerability.title} is now assigned to {assignee.username}.',
+            vulnerability=vulnerability,
+        )
 
         serializer = self.get_serializer(vulnerability)
         return Response(serializer.data)
@@ -263,8 +295,15 @@ class VulnerabilityViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        old_due = vulnerability.due_date.isoformat() if vulnerability.due_date else None
         vulnerability.due_date = parsed
         vulnerability.save()
+
+        # Day 6: server-side audit (single record for this action).
+        write_audit(
+            request.user, 'VULNERABILITY_DUE_DATE', 'Vulnerability', vulnerability.id,
+            old_due, parsed.isoformat(),
+        )
 
         serializer = self.get_serializer(vulnerability)
         return Response(serializer.data)
@@ -284,6 +323,16 @@ class VulnerabilityViewSet(viewsets.ModelViewSet):
             return rejected
         vulnerability.status = 'VERIFIED'
         vulnerability.save()
+
+        # Day 6: audit + notify the assigned developer.
+        write_audit(request.user, 'VULNERABILITY_STATUS_CHANGE', 'Vulnerability', vulnerability.id, 'REMEDIATED', 'VERIFIED')
+        if vulnerability.assigned_to_id:
+            notify(
+                vulnerability.assigned_to_id, 'SYSTEM',
+                f'Vulnerability {vulnerability.id} verified',
+                f'{vulnerability.title} was verified by the analyst team.',
+                vulnerability=vulnerability,
+            )
 
         serializer = self.get_serializer(vulnerability)
         return Response(serializer.data)
@@ -306,8 +355,169 @@ class VulnerabilityViewSet(viewsets.ModelViewSet):
         rejected = self._check_lifecycle(vulnerability, target, request.user)
         if rejected is not None:
             return rejected
+        old_status = vulnerability.status
         vulnerability.status = target
         vulnerability.save()
 
+        # Day 6: one audit row per transition + MVP notifications.
+        write_audit(request.user, 'VULNERABILITY_STATUS_CHANGE', 'Vulnerability', vulnerability.id, old_status, target)
+        if target == 'REMEDIATED':
+            notify_many(
+                analyst_user_ids(), 'REMEDIATION',
+                f'Vulnerability {vulnerability.id} marked REMEDIATED',
+                f'{vulnerability.title} is ready for analyst verification.',
+                vulnerability=vulnerability,
+            )
+        elif target == 'VERIFIED' and vulnerability.assigned_to_id:
+            notify(
+                vulnerability.assigned_to_id, 'SYSTEM',
+                f'Vulnerability {vulnerability.id} verified',
+                f'{vulnerability.title} was verified by the analyst team.',
+                vulnerability=vulnerability,
+            )
+        elif target == 'CLOSED':
+            recipients = list(analyst_user_ids())
+            if vulnerability.assigned_to_id:
+                recipients.append(vulnerability.assigned_to_id)
+            notify_many(
+                recipients, 'SYSTEM',
+                f'Vulnerability {vulnerability.id} closed',
+                f'{vulnerability.title} is now CLOSED.',
+                vulnerability=vulnerability,
+            )
+
         serializer = self.get_serializer(vulnerability)
         return Response(serializer.data)
+
+
+class RemediationViewSet(viewsets.ModelViewSet):
+    """Day 6: real remediation workflow on the existing RemediationTask model.
+
+    No second lifecycle: the vulnerability lifecycle stays authoritative.
+    Developers may create/update work only for vulnerabilities assigned to
+    them; Analyst/Administrator may view and edit anything.
+    """
+
+    queryset = RemediationTask.objects.all().order_by('-updated_at')
+    serializer_class = RemediationTaskSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        if is_analyst(self.request.user):
+            base = qs
+        else:
+            base = qs.filter(vulnerability__assigned_to=self.request.user)
+        vuln_id = self.request.query_params.get('vulnerability')
+        if vuln_id:
+            base = base.filter(vulnerability_id=vuln_id)
+        return base
+
+    def _can_write(self, vulnerability):
+        if is_analyst(self.request.user):
+            return True
+        return (
+            vulnerability.assigned_to_id is not None
+            and int(vulnerability.assigned_to_id) == int(self.request.user.id)
+        )
+
+    def perform_create(self, serializer):
+        vulnerability = serializer.validated_data.get('vulnerability')
+        if vulnerability is None or not self._can_write(vulnerability):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('Only the assigned user, Security Analyst or Administrator can record remediation work.')
+        if not serializer.validated_data.get('assigned_to'):
+            serializer.validated_data['assigned_to'] = vulnerability.assigned_to
+        instance = serializer.save()
+        if instance.status == 'COMPLETED' and not instance.completed_at:
+            from django.utils import timezone
+            instance.completed_at = timezone.now()
+            instance.save(update_fields=['completed_at', 'updated_at'])
+        write_audit(
+            self.request.user, 'REMEDIATION_CREATED', 'RemediationTask', instance.id,
+            None, {'vulnerability': vulnerability.id, 'status': instance.status},
+        )
+
+    def perform_update(self, serializer):
+        instance = self.get_object()
+        if not self._can_write(instance.vulnerability):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('Only the assigned user, Security Analyst or Administrator can update remediation work.')
+        old = {'notes': instance.notes, 'description': instance.description, 'status': instance.status}
+        updated = serializer.save()
+        if updated.status == 'COMPLETED' and not updated.completed_at:
+            from django.utils import timezone
+            updated.completed_at = timezone.now()
+            updated.save(update_fields=['completed_at', 'updated_at'])
+        write_audit(
+            self.request.user, 'REMEDIATION_UPDATED', 'RemediationTask', updated.id,
+            old,
+            {'notes': updated.notes, 'description': updated.description, 'status': updated.status},
+        )
+
+
+class NotificationViewSet(viewsets.ModelViewSet):
+    """Day 6: persisted notifications. Server-created only (no POST/DELETE).
+
+    Users see their own notifications; Analyst/Administrator see all.
+    Only the is_read flag is writable, and only on your own rows.
+    """
+
+    queryset = Notification.objects.all().order_by('-created_at')
+    serializer_class = NotificationSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        if is_analyst(self.request.user):
+            return qs
+        return qs.filter(recipient=self.request.user)
+
+    def create(self, request, *args, **kwargs):
+        return Response(
+            {'error': 'Notifications are created by the server.'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    def destroy(self, request, *args, **kwargs):
+        return Response(
+            {'error': 'Notifications cannot be deleted.'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    def perform_update(self, serializer):
+        instance = self.get_object()
+        if int(instance.recipient_id) != int(self.request.user.id) and not is_analyst(self.request.user):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('You can only update your own notifications.')
+        serializer.save(vulnerability=instance.vulnerability, recipient=instance.recipient)
+
+    @action(detail=False, methods=['post'], url_path='mark-all-read')
+    def mark_all_read(self, request):
+        updated = Notification.objects.filter(
+            recipient=request.user, is_read=False
+        ).update(is_read=True)
+        return Response({'marked': updated})
+
+    @action(detail=True, methods=['post'], url_path='read')
+    def mark_read(self, request, pk=None):
+        notification = self.get_object()
+        if int(notification.recipient_id) != int(request.user.id) and not is_analyst(request.user):
+            return Response(
+                {'error': 'You can only update your own notifications.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        notification.is_read = True
+        notification.save(update_fields=['is_read'])
+        return Response(self.get_serializer(notification).data)
+
+
+class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
+    """Read-only audit trail: Administrator/Security Analyst only.
+
+    IT/Developer is denied at the API (HTTP 403), not just hidden in UI.
+    """
+
+    queryset = AuditLog.objects.all().order_by('-created_at')
+    serializer_class = AuditLogSerializer
+    permission_classes = [IsAdministratorOrSecurityAnalyst]

@@ -2,18 +2,30 @@ import React, { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { useApp } from '../context/SecurityContext';
-import { Card, Field, Mono, buttonPrimary, buttonGhost } from '../components/ui';
+import { Card, Field, Mono, LoadingState, buttonPrimary, buttonGhost } from '../components/ui';
 import type { RemediationStatus } from '../types';
 
 const flow: RemediationStatus[] = ['To Do', 'In Progress', 'Remediated', 'Awaiting Verification', 'Completed'];
 
 export const RemediationDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
-  const { remediation, vulnerabilities, userById, updateRemediationStatus, verifyVulnerability, user } = useApp();
+  const { remediation, vulnerabilities, userById, updateRemediationStatus, verifyVulnerability, saveRemediation, user, isLoading } = useApp();
   const [notes, setNotes] = useState('');
   const [verifyErr, setVerifyErr] = useState<string | null>(null);
   const [verifying, setVerifying] = useState(false);
+  const [remMsg, setRemMsg] = useState<string | null>(null);
+  const [remErr, setRemErr] = useState<string | null>(null);
+  const [savingRem, setSavingRem] = useState(false);
   const task = remediation.find((r) => r.id === id);
+
+  if (isLoading && !task) {
+    return (
+      <div>
+        <Link to="/remediation" className="text-sm text-cyan-300 hover:underline">← Back to remediation</Link>
+        <Card className="p-10 mt-6 text-center text-slate-400"><LoadingState title="Loading task…" /></Card>
+      </div>
+    );
+  }
 
   if (!task) {
     return (
@@ -59,7 +71,12 @@ export const RemediationDetailPage: React.FC = () => {
         <Card className="p-6 lg:col-span-2 space-y-6">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
             <Field label="Status"><p>{task.status}</p></Field>
-            <Field label="Assigned to"><p>{userById(task.assignedTo)?.name || '—'}</p></Field>
+            <Field label="Assigned to"><p>{(() => {
+              const u = userById(task.assignedTo);
+              if (!u) return '—';
+              const full = [u.first_name, u.last_name].filter(Boolean).join(' ').trim();
+              return full || u.username || u.email || `User ${u.id}`;
+            })()}</p></Field>
             <Field label="Due"><Mono>{task.dueDate || '—'}</Mono></Field>
             <Field label="Updated"><Mono>{task.updatedAt}</Mono></Field>
           </div>
@@ -69,6 +86,35 @@ export const RemediationDetailPage: React.FC = () => {
           <div>
             <label className="block text-xs uppercase tracking-wider text-slate-500 mb-1.5">Add a note</label>
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} placeholder="Progress update, evidence, links…" className="w-full px-3.5 py-2.5 bg-[#0d1322] border border-slate-700 rounded-xl text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-500" />
+            {remMsg && <div className="mt-2 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-sm text-emerald-300">{remMsg}</div>}
+            {remErr && <div className="mt-2 p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-sm text-rose-300">{remErr}</div>}
+            <button
+              onClick={async () => {
+                setRemMsg(null);
+                setRemErr(null);
+                if (!notes.trim()) {
+                  setRemErr('Enter a note first.');
+                  return;
+                }
+                setSavingRem(true);
+                try {
+                  await saveRemediation(task.vulnerabilityId, {
+                    notes: notes.trim(),
+                    proposedFix: task.proposedFix,
+                  });
+                  setRemMsg('Note saved.');
+                  setNotes('');
+                } catch (e) {
+                  setRemErr(e instanceof Error ? e.message : 'Save failed.');
+                } finally {
+                  setSavingRem(false);
+                }
+              }}
+              disabled={savingRem}
+              className={`${buttonPrimary} justify-center mt-2 !text-xs !px-4 !py-2`}
+            >
+              {savingRem ? 'Saving…' : 'Save note'}
+            </button>
           </div>
         </Card>
         <Card className="p-6">

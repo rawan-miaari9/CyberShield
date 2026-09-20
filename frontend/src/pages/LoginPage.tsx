@@ -37,15 +37,15 @@ export const LoginPage: React.FC = () => {
     <div className="min-h-screen w-screen flex bg-[#0b0f17] text-slate-100">
       {/* LEFT — calm brand panel */}
       <div className="hidden lg:flex flex-1 flex-col justify-between bg-[#0d1321] border-r border-slate-800 px-14 py-12">
-        <div className="flex items-center gap-3.5">
-          <div className="w-12 h-12 rounded-xl bg-cyan-600 flex items-center justify-center text-white">
-            <Shield className="w-6 h-6" strokeWidth={2} />
+        <div className="flex items-center gap-4">
+          <div className="w-14 h-14 rounded-xl bg-cyan-600 flex items-center justify-center text-white">
+            <Shield className="w-7 h-7" strokeWidth={2} />
           </div>
           <div>
-            <div className="font-bold text-[21px] tracking-wide text-white leading-none">
+            <div className="font-bold text-[30px] tracking-wide text-white leading-none">
               CYBER<span className="text-cyan-400">SHIELD</span>
             </div>
-            <p className="text-[14px] text-slate-500 mt-1.5">Vulnerability Management Platform</p>
+            <p className="text-[16px] text-slate-500 mt-2">Vulnerability Management Platform</p>
           </div>
         </div>
 
@@ -82,11 +82,11 @@ export const LoginPage: React.FC = () => {
       {/* RIGHT — form */}
       <div className="flex-1 flex items-center justify-center px-6 py-12 sm:px-12">
         <div className="w-full max-w-[460px] animate-rise">
-          <div className="lg:hidden flex items-center gap-2.5 mb-8">
-            <div className="w-11 h-11 rounded-lg bg-cyan-600 flex items-center justify-center text-white">
+          <div className="lg:hidden flex items-center gap-3 mb-8">
+            <div className="w-12 h-12 rounded-lg bg-cyan-600 flex items-center justify-center text-white">
               <Shield className="w-6 h-6" />
             </div>
-            <span className="font-bold tracking-wide text-white text-[20px]">CYBER<span className="text-cyan-400">SHIELD</span></span>
+            <span className="font-bold tracking-wide text-white text-[26px]">CYBER<span className="text-cyan-400">SHIELD</span></span>
           </div>
 
           <h2 className="text-[40px] font-bold tracking-tight text-white leading-tight">Sign in</h2>

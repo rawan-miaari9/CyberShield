@@ -1,10 +1,10 @@
 import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useApp } from '../context/SecurityContext';
-import { Card, PageHeader, SeverityBadge, EmptyState, Mono, inputClass } from '../components/ui';
+import { Card, PageHeader, SeverityBadge, EmptyState, LoadingState, Mono, inputClass } from '../components/ui';
 
 export const FindingsPage: React.FC = () => {
-  const { findings, assetById } = useApp();
+  const { findings, assetById, isLoading } = useApp();
   const [search, setSearch] = useState('');
   const [sev, setSev] = useState('all');
   const [status, setStatus] = useState('all');
@@ -75,7 +75,7 @@ export const FindingsPage: React.FC = () => {
               ))}
             </tbody>
           </table>
-          {filtered.length === 0 && <EmptyState title="No findings match" hint="Adjust your search or filters." />}
+          {isLoading ? <LoadingState title="Loading findings…" /> : filtered.length === 0 && <EmptyState title="No findings match" hint="Adjust your search or filters." />}
         </div>
       </Card>
     </div>

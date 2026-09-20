@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Asset, SecurityFinding, Vulnerability
+from .models import Asset, AuditLog, Notification, RemediationTask, SecurityFinding, Vulnerability
 
 
 class AssetSerializer(serializers.ModelSerializer):
@@ -86,3 +86,75 @@ class VulnerabilitySerializer(serializers.ModelSerializer):
             'created_at',
             'updated_at',
         ]
+
+
+class RemediationTaskSerializer(serializers.ModelSerializer):
+    """Day 6: exposes the existing RemediationTask model (no model change)."""
+
+    class Meta:
+        model = RemediationTask
+        fields = [
+            'id',
+            'vulnerability',
+            'title',
+            'description',
+            'assigned_to',
+            'status',
+            'due_date',
+            'notes',
+            'completed_at',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = [
+            'id',
+            'created_at',
+            'updated_at',
+        ]
+
+
+class NotificationSerializer(serializers.ModelSerializer):
+    """Day 6: safe fields only — recipient/vulnerability are IDs, no secrets."""
+
+    class Meta:
+        model = Notification
+        fields = [
+            'id',
+            'recipient',
+            'notification_type',
+            'title',
+            'message',
+            'vulnerability',
+            'is_read',
+            'created_at',
+        ]
+        read_only_fields = [
+            'id',
+            'created_at',
+        ]
+
+
+class AuditLogSerializer(serializers.ModelSerializer):
+    """Day 6: read-only audit trail (created server-side only)."""
+
+    actor_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AuditLog
+        fields = [
+            'id',
+            'actor',
+            'actor_name',
+            'action',
+            'entity_type',
+            'entity_id',
+            'old_value',
+            'new_value',
+            'created_at',
+        ]
+        read_only_fields = fields
+
+    def get_actor_name(self, obj):
+        if obj.actor is None:
+            return 'system'
+        return obj.actor.username or obj.actor.email or f'User {obj.actor_id}'
