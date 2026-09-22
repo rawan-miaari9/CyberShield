@@ -10,8 +10,9 @@ from rest_framework.response import Response
 
 from accounts.permissions import IsAdministratorOrSecurityAnalyst
 
-from .models import Asset, AuditLog, Notification, RemediationTask, ScannerIntegration, SecurityFinding, Vulnerability
+from .models import AIAnalysis, Asset, AuditLog, Notification, RemediationTask, ScannerIntegration, SecurityFinding, Vulnerability
 from .serializers import (
+    AIAnalysisSerializer,
     AssetSerializer,
     AuditLogSerializer,
     NotificationSerializer,
@@ -19,6 +20,7 @@ from .serializers import (
     SecurityFindingSerializer,
     VulnerabilitySerializer,
 )
+from .ai_service import MODEL_NAME, PROVIDER_NAME, analyze_vulnerability
 from .workflow import (
     analyst_user_ids,
     is_analyst,
@@ -151,11 +153,17 @@ class SecurityFindingViewSet(viewsets.ModelViewSet):
                 {'error': 'Only REVIEWED findings can be promoted.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+        # Vulnerability has no Informational level (LOW is the lowest managed
+        # severity). ZAP informational findings arrive as INFO, so normalize
+        # to LOW here — the finding itself keeps its original INFO severity.
+        severity = finding.severity
+        if severity not in dict(Vulnerability.SEVERITY_CHOICES):
+            severity = 'LOW'
         vulnerability = Vulnerability.objects.create(
             finding=finding,
             title=finding.title,
             description=finding.description,
-            severity=finding.severity,
+            severity=severity,
             impact=impact,
             likelihood=likelihood,
         )
@@ -174,7 +182,7 @@ class SecurityFindingViewSet(viewsets.ModelViewSet):
         )
 
 class VulnerabilityViewSet(viewsets.ModelViewSet):
-    queryset = Vulnerability.objects.all().order_by('-created_at')
+    queryset = Vulnerability.objects.prefetch_related('ai_analyses').all().order_by('-created_at')
     serializer_class = VulnerabilitySerializer
     permission_classes = [IsAuthenticated]
 
@@ -183,7 +191,9 @@ class VulnerabilityViewSet(viewsets.ModelViewSet):
         # 'transition' stays IsAuthenticated: role rules are enforced
         # inside _check_lifecycle so assigned IT/Developers can advance
         # their own items while VERIFY/CLOSE stay analyst-only.
-        if self.action in ('assign', 'set_due_date', 'verify'):
+        # Day 8: AI generation is analyst-only; reading past analyses
+        # stays IsAuthenticated like the vulnerability itself.
+        if self.action in ('assign', 'set_due_date', 'verify', 'generate_ai_analysis'):
             return [IsAdministratorOrSecurityAnalyst()]
         return [IsAuthenticated()]
 
@@ -435,6 +445,67 @@ class VulnerabilityViewSet(viewsets.ModelViewSet):
 
         serializer = self.get_serializer(vulnerability)
         return Response(serializer.data)
+
+    @action(detail=True, methods=['post'], url_path='ai-analysis')
+    def generate_ai_analysis(self, request, pk=None):
+        """POST /api/vulnerabilities/<id>/ai-analysis/.
+
+        Day 8: explicitly-requested Gemini guidance only (never automatic).
+        On success persists one AIAnalysis row (history is append-only);
+        on provider failure returns an error with no DB write and no
+        lifecycle change. Administrator/Security Analyst only.
+        """
+        vulnerability = self.get_object()
+
+        result = analyze_vulnerability(vulnerability)
+        if not result.get('success'):
+            return Response(
+                {'error': result.get('error') or 'AI generation failed. Please try again later.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+
+        analysis = result.get('analysis') or {}
+        required = ('explanation', 'potential_impact', 'remediation_steps', 'verification_steps')
+        if any(not str(analysis.get(field) or '').strip() for field in required):
+            return Response(
+                {'error': 'AI service returned an incomplete response. Please try again later.'},
+                status=status.HTTP_502_BAD_GATEWAY
+            )
+
+        record = AIAnalysis.objects.create(
+            vulnerability=vulnerability,
+            explanation=analysis['explanation'],
+            potential_impact=analysis['potential_impact'],
+            remediation_steps=analysis['remediation_steps'],
+            verification_steps=analysis['verification_steps'],
+            provider=PROVIDER_NAME,
+            model_name=MODEL_NAME,
+            generated_by=request.user if getattr(request.user, 'is_authenticated', False) else None,
+        )
+
+        # Day 8: audit through the existing mechanism (single record).
+        write_audit(
+            request.user, 'AI_ANALYSIS_GENERATED', 'AIAnalysis', record.id,
+            None, {'vulnerability': vulnerability.id, 'provider': PROVIDER_NAME, 'model': MODEL_NAME},
+        )
+
+        return Response(
+            AIAnalysisSerializer(record).data,
+            status=status.HTTP_201_CREATED
+        )
+
+    @action(detail=True, methods=['get'], url_path='ai-analyses')
+    def list_ai_analyses(self, request, pk=None):
+        """GET /api/vulnerabilities/<id>/ai-analyses/.
+
+        Past guidance stays retrievable so a page reload never loses it.
+        (The vulnerability detail payload also nests ai_analyses.)
+        """
+        vulnerability = self.get_object()
+        records = AIAnalysis.objects.filter(
+            vulnerability=vulnerability
+        ).order_by('-created_at')
+        return Response(AIAnalysisSerializer(records, many=True).data)
 
 
 class RemediationViewSet(viewsets.ModelViewSet):

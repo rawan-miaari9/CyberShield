@@ -286,8 +286,9 @@ class Vulnerability(models.Model):
 
         super().save(*args, **kwargs)
 
-def __str__(self):
-    return self.title
+    def __str__(self):
+        return self.title
+
 class RemediationTask(models.Model):
     STATUS_CHOICES = [
         ('OPEN', 'Open'),

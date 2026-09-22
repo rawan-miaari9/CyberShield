@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Asset, AuditLog, Notification, RemediationTask, SecurityFinding, Vulnerability
+from .models import AIAnalysis, Asset, AuditLog, Notification, RemediationTask, SecurityFinding, Vulnerability
 
 
 class AssetSerializer(serializers.ModelSerializer):
@@ -56,7 +56,37 @@ class SecurityFindingSerializer(serializers.ModelSerializer):
         ]
 
 
+class AIAnalysisSerializer(serializers.ModelSerializer):
+    """Day 8: persisted Gemini guidance (server-created only, read via API)."""
+
+    generated_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AIAnalysis
+        fields = [
+            'id',
+            'vulnerability',
+            'explanation',
+            'potential_impact',
+            'remediation_steps',
+            'verification_steps',
+            'provider',
+            'model_name',
+            'generated_by',
+            'generated_by_name',
+            'created_at',
+        ]
+        read_only_fields = fields
+
+    def get_generated_by_name(self, obj):
+        if obj.generated_by is None:
+            return None
+        return obj.generated_by.username or obj.generated_by.email or f'User {obj.generated_by_id}'
+
+
 class VulnerabilitySerializer(serializers.ModelSerializer):
+
+    ai_analyses = AIAnalysisSerializer(many=True, read_only=True)
 
     class Meta:
         model = Vulnerability
@@ -75,6 +105,7 @@ class VulnerabilitySerializer(serializers.ModelSerializer):
             'assigned_to',
             'due_date',
             'remediation_guidance',
+            'ai_analyses',
             'created_at',
             'updated_at',
         ]
@@ -83,6 +114,7 @@ class VulnerabilitySerializer(serializers.ModelSerializer):
             'id',
             'risk_score',
             'risk_level',
+            'ai_analyses',
             'created_at',
             'updated_at',
         ]

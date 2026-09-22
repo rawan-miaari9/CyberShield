@@ -78,6 +78,7 @@ def normalize_zap_alert(alert):
         "Low": "LOW",
         "Medium": "MEDIUM",
         "High": "HIGH",
+        "Critical": "CRITICAL",
     }
 
     severity = severity_map.get(
