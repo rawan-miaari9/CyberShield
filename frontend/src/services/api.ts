@@ -440,6 +440,40 @@ export const api = {
 async getCurrentUser(): Promise<User> {
   return fetchResource<User>('auth/me/', 'current user');
 },
+
+async testZapConnection(): Promise<{
+  success: boolean;
+  version?: string;
+  error?: string;
+}> {
+  try {
+    const res = await apiClient.get('findings/zap/test-connection/');
+    return res.data;
+  } catch (err) {
+    throw toApiError(err, 'ZAP connection');
+  }
+},
+
+async syncZapFindings(assetId: string): Promise<{
+  success: boolean;
+  total: number;
+  created: number;
+  duplicates: number;
+  error?: string;
+}> {
+  try {
+    const res = await apiClient.post(
+      'findings/zap/sync/',
+      { asset_id: Number(assetId) },
+      { timeout: 60000 }
+    );
+
+    return res.data;
+  } catch (err) {
+    throw toApiError(err, 'ZAP sync');
+  }
+},
+
 async getFindings(): Promise<SecurityFinding[]> {
   if (USE_MOCK_DATA) return mockFindings;
 

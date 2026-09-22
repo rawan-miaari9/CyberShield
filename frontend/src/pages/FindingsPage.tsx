@@ -2,12 +2,62 @@ import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useApp } from '../context/SecurityContext';
 import { Card, PageHeader, SeverityBadge, EmptyState, LoadingState, Mono, inputClass } from '../components/ui';
+import { api } from '../services/api';
 
 export const FindingsPage: React.FC = () => {
-  const { findings, assetById, isLoading } = useApp();
+  const { findings, assetById, isLoading, refreshFindings } = useApp();
+
+  const [zapStatus, setZapStatus] = useState<'unknown' | 'connected' | 'disconnected'>('unknown');
+  const [zapVersion, setZapVersion] = useState('');
+  const [testingZap, setTestingZap] = useState(false);
+  const [syncingZap, setSyncingZap] = useState(false);
+  const [syncMessage, setSyncMessage] = useState('');
   const [search, setSearch] = useState('');
   const [sev, setSev] = useState('all');
   const [status, setStatus] = useState('all');
+
+  const handleTestZapConnection = async () => {
+    setTestingZap(true);
+
+    try {
+      const result = await api.testZapConnection();
+
+      if (result.success) {
+        setZapStatus('connected');
+        setZapVersion(result.version || '');
+      } else {
+        setZapStatus('disconnected');
+        setZapVersion('');
+      }
+    } catch {
+      setZapStatus('disconnected');
+      setZapVersion('');
+    } finally {
+      setTestingZap(false);
+    }
+  };
+
+  const handleSyncZap = async () => {
+    setSyncingZap(true);
+    setSyncMessage('');
+
+    try {
+      const result = await api.syncZapFindings('3');
+
+      setZapStatus('connected');
+
+      setSyncMessage(
+        `Sync complete: ${result.created} new, ${result.duplicates} duplicates, ${result.total} total.`
+      );
+      await refreshFindings();
+
+    } catch {
+      setSyncMessage('Sync failed. Please check the ZAP connection.');
+    } finally {
+      setSyncingZap(false);
+      
+    }
+};
 
   const filtered = useMemo(() => findings.filter((f) => {
     const q = search.toLowerCase();
@@ -18,6 +68,59 @@ export const FindingsPage: React.FC = () => {
   return (
     <div>
       <PageHeader title="Findings" subtitle="Raw security issues imported from external scanners. Review each finding, then promote approved items into managed vulnerabilities." />
+      <Card className="p-5 mb-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <h3 className="text-sm font-medium text-slate-100">
+              OWASP ZAP Scanner
+            </h3>
+
+            <div className="mt-1 text-sm text-slate-400">
+              {zapStatus === 'unknown' && (
+                <span>Connection not tested</span>
+              )}
+
+              {zapStatus === 'connected' && (
+                <span className="text-emerald-400">
+                  ● Connected{zapVersion ? ` — v${zapVersion}` : ''}
+                </span>
+              )}
+
+              {zapStatus === 'disconnected' && (
+                <span className="text-red-400">
+                  ● Disconnected
+                </span>
+              )}
+            </div>
+          </div>
+
+          {syncMessage && (
+          <div className="mt-2 text-sm text-slate-400">
+            {syncMessage}
+          </div>
+        )}
+
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={handleTestZapConnection}
+              disabled={testingZap}
+              className="px-4 py-2 rounded-lg bg-slate-800 text-sm text-slate-100 hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {testingZap ? 'Testing…' : 'Test Connection'}
+            </button>
+
+            <button
+              type="button"
+              onClick={handleSyncZap}
+              disabled={syncingZap}
+              className="px-4 py-2 rounded-lg bg-cyan-600 text-sm text-white hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {syncingZap ? 'Syncing…' : 'Sync Findings'}
+            </button>
+          </div>
+        </div>
+      </Card>
       <Card className="p-5 mb-6">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search title, ID, or CWE…" className={`${inputClass} md:col-span-2`} />

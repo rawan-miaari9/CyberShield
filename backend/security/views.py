@@ -10,7 +10,7 @@ from rest_framework.response import Response
 
 from accounts.permissions import IsAdministratorOrSecurityAnalyst
 
-from .models import Asset, AuditLog, Notification, RemediationTask, SecurityFinding, Vulnerability
+from .models import Asset, AuditLog, Notification, RemediationTask, ScannerIntegration, SecurityFinding, Vulnerability
 from .serializers import (
     AssetSerializer,
     AuditLogSerializer,
@@ -27,6 +27,7 @@ from .workflow import (
     write_audit,
 )
 
+from .zap_service import test_zap_connection, sync_zap_findings
 
 class AssetViewSet(viewsets.ModelViewSet):
     queryset = Asset.objects.all().order_by('-created_at')
@@ -43,10 +44,57 @@ class SecurityFindingViewSet(viewsets.ModelViewSet):
         # Day 5 RBAC: analyst workflow actions require Administrator or
         # Security Analyst. Reads/writes otherwise stay IsAuthenticated
         # so IT/Developer keeps read access without analyst powers.
-        if self.action in ('review', 'promote'):
+        if self.action in ('review', 'promote', 'test_zap_connection', 'sync_zap_findings'):
             return [IsAdministratorOrSecurityAnalyst()]
         return [IsAuthenticated()]
 
+
+    @action(detail=False, methods=['get'], url_path='zap/test-connection')
+    def test_zap_connection(self, request):
+        result = test_zap_connection()
+
+        if result['success']:
+            return Response(result, status=status.HTTP_200_OK)
+
+        return Response(
+            result,
+            status=status.HTTP_503_SERVICE_UNAVAILABLE
+        )
+
+
+    @action(detail=False, methods=['post'], url_path='zap/sync')
+    def sync_zap_findings(self, request):
+        integration = ScannerIntegration.objects.filter(
+            scanner_type='ZAP',
+            is_enabled=True
+        ).first()
+
+        if not integration:
+            return Response(
+                {"error": "No enabled ZAP integration found."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        asset_id = request.data.get("asset_id")
+
+        try:
+            asset = Asset.objects.get(id=asset_id)
+        except Asset.DoesNotExist:
+            return Response(
+                {"error": "Asset not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        result = sync_zap_findings(integration, asset)
+
+        if result["success"]:
+            return Response(result, status=status.HTTP_200_OK)
+
+        return Response(
+            result,
+            status=status.HTTP_503_SERVICE_UNAVAILABLE
+        )
+        
     @action(detail=True, methods=['post'])
     def review(self, request, pk=None):
         finding = self.get_object()
@@ -59,13 +107,12 @@ class SecurityFindingViewSet(viewsets.ModelViewSet):
         finding.status = 'REVIEWED'
         finding.save()
 
-        # Day 6: server-side audit (single record for this action).
+    
         write_audit(request.user, 'FINDING_REVIEWED', 'SecurityFinding', finding.id, old_status, 'REVIEWED')
 
         serializer = self.get_serializer(finding)
         return Response(serializer.data)
     @action(detail=True, methods=['post'])
-
     def promote(self, request, pk=None):
         finding = self.get_object()
 

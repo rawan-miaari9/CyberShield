@@ -33,6 +33,7 @@ interface AppContextType {
   markNotificationRead: (id: string) => Promise<void>;
   markAllNotificationsRead: () => Promise<void>;
   updateFindingStatus: (id: string, status: SecurityFinding['status']) => Promise<void>;
+  refreshFindings: () => Promise<void>;
   promoteFinding: (id: string, impact: number, likelihood: number) => Promise<string>;
   updateVulnerabilityStatus: (id: string, status: Vulnerability['status']) => Promise<void>;
   assignVulnerability: (id: string, userId: string | null) => Promise<void>;
@@ -248,6 +249,16 @@ const login = useCallback(async (username: string, password: string) => {
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
   }, []);
 
+  const refreshFindings = useCallback(async () => {
+  try {
+    const freshFindings = await api.getFindings();
+    setFindings(freshFindings);
+  } catch (error) {
+    console.error('Failed to refresh findings:', error);
+  }
+}, []);
+
+
   const updateFindingStatus = useCallback(
     async (id: string, status: SecurityFinding['status']) => {
       // Day 6: REVIEWED persists via the backend (server-audited as
@@ -408,12 +419,12 @@ const login = useCallback(async (username: string, password: string) => {
     () => ({
       user, token, login, logout, findings, vulnerabilities, assets, remediation, integrations,
       notifications, auditLogs, users, isLoading, apiError, isDemoMode: USE_MOCK_DATA, markNotificationRead, markAllNotificationsRead,
-      updateFindingStatus, promoteFinding, updateVulnerabilityStatus, assignVulnerability,
+      updateFindingStatus, refreshFindings, promoteFinding, updateVulnerabilityStatus, assignVulnerability,
       updateVulnerabilityDueDate, verifyVulnerability, saveRemediation, updateRemediationStatus, syncScanner,
       unreadCount: notifications.filter((n) => !n.read).length,
       assetById, userById, authReady,
     }),
-    [user, token, login, logout, findings, vulnerabilities, assets, remediation, integrations, notifications, auditLogs, users, isLoading, apiError, authReady, markNotificationRead, markAllNotificationsRead, updateFindingStatus, promoteFinding, updateVulnerabilityStatus, assignVulnerability, updateVulnerabilityDueDate, verifyVulnerability, saveRemediation, updateRemediationStatus, syncScanner, assetById, userById],
+    [user, token, login, logout, findings, vulnerabilities, assets, remediation, integrations, notifications, auditLogs, users, isLoading, apiError, authReady, markNotificationRead, markAllNotificationsRead, updateFindingStatus, refreshFindings, promoteFinding, updateVulnerabilityStatus, assignVulnerability, updateVulnerabilityDueDate, verifyVulnerability, saveRemediation, updateRemediationStatus, syncScanner, assetById, userById],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
