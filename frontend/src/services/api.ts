@@ -922,10 +922,14 @@ async getAssets(): Promise<Asset[]> {
   async generateAIAnalysis(vulnerabilityId: string): Promise<VulnerabilityAIAnalysis> {
     // Server-side Gemini generation only: never contacts an AI provider
     // from React. Explicit analyst/admin action; backend RBAC applies.
+    // Per-request 90s timeout (global stays 10s): generation legitimately
+    // takes 10-60s plus one bounded server-side retry, so the default
+    // window would abort healthy requests and cause broken-pipe waste.
     try {
       const res = await apiClient.post<DjangoAIAnalysis>(
         `vulnerabilities/${vulnerabilityId}/ai-analysis/`,
-        {}
+        {},
+        { timeout: 90000 }
       );
       return mapDjangoAIAnalysis(res.data);
     } catch (err) {

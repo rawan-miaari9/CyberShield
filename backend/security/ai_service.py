@@ -1,3 +1,4 @@
+import logging
 import os
 import time
 
@@ -6,8 +7,10 @@ from google.genai import types
 from pydantic import BaseModel
 from google.genai.errors import ClientError, ServerError
 
+logger = logging.getLogger(__name__)
+
 PROVIDER_NAME = "Google Gemini"
-MODEL_NAME = "gemini-3.6-flash"
+MODEL_NAME = "gemini-3.5-flash-lite"
 
 # The provider answers 503 UNAVAILABLE itself ("high demand ... usually
 # temporary") on this model. A short bounded retry handles transient spikes;
@@ -39,6 +42,22 @@ class VulnerabilityAIResponse(BaseModel):
     potential_impact: str
     remediation_steps: str
     verification_steps: str
+
+def _log_provider_error(action, attempt, error):
+    """Log the REAL provider error to the Django console (dev diagnosis).
+
+    Only the status code/name and a short message excerpt are logged —
+    never the API key (it travels in headers, not error bodies), never
+    the prompt, never raw scanner data. The frontend still receives only
+    the generic user-friendly messages below.
+    """
+    code = getattr(error, "code", None)
+    status = getattr(error, "status", None)
+    message = str(getattr(error, "message", None) or error)
+    logger.warning(
+        "Gemini %s failed (attempt %s): code=%s status=%s message=%.200s",
+        action, attempt, code, status, message,
+    )
 
 def test_gemini_connection():
     """Test whether CyberShield can communicate with the Gemini API."""
@@ -148,6 +167,12 @@ def analyze_vulnerability(vulnerability):
     config = types.GenerateContentConfig(
         response_mime_type="application/json",
         response_schema=VulnerabilityAIResponse,
+        # No tools/functions are used, so automatic function calling can
+        # never trigger — disable it to silence the SDK's "direct AFC in
+        # Models.generate_content" warning (verified benign log noise).
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(
+            disable=True
+        ),
     )
 
     for attempt in range(1, AI_GENERATION_ATTEMPTS + 1):
@@ -179,6 +204,7 @@ def analyze_vulnerability(vulnerability):
             }
 
         except ServerError as error:
+            _log_provider_error("analysis", attempt, error)
             if attempt < AI_GENERATION_ATTEMPTS:
                 time.sleep(AI_RETRY_BASE_DELAY_SECONDS * attempt)
                 continue
@@ -190,6 +216,7 @@ def analyze_vulnerability(vulnerability):
         except ClientError as error:
             # Daily quota exhaustion must not be retried blindly; other 4xx
             # failures would not heal by retrying either. Safe message only.
+            _log_provider_error("analysis", attempt, error)
             if getattr(error, "code", None) == 429:
                 return {
                     "success": False,
@@ -201,6 +228,7 @@ def analyze_vulnerability(vulnerability):
             }
 
         except Exception as error:
+            logger.exception("Gemini analysis failed with unexpected error")
             return {
                 "success": False,
                 "error": "AI generation failed. Please try again later.",
