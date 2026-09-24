@@ -1,12 +1,15 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useApp } from '../context/SecurityContext';
+import { displayUser } from './VulnerabilityDetailPage';
 import { Card, PageHeader, EmptyState, LoadingState, Mono, inputClass } from '../components/ui';
 
 export const RemediationPage: React.FC = () => {
-  const { remediation, vulnerabilities, userById, isLoading } = useApp();
+  const { remediation, vulnerabilities, userById, isLoading, getRemediationDisplay } = useApp();
   const [status, setStatus] = useState('all');
-  const filtered = remediation.filter((r) => status === 'all' || r.status === status);
+  // Filter and render on the live display status (persisted task state +
+  // linked vulnerability lifecycle), never on a stale local guess.
+  const filtered = remediation.filter((r) => status === 'all' || getRemediationDisplay(r) === status);
   const titleFor = (vid: string) => vulnerabilities.find((v) => v.id === vid)?.title || vid;
 
   return (
@@ -42,8 +45,12 @@ export const RemediationPage: React.FC = () => {
                 <tr key={r.id} className="hover:bg-slate-800/30">
                   <td className="px-5 py-4"><Link to={`/remediation/${r.id}`} className="font-mono-code text-[13px] text-cyan-300 hover:underline">{r.id}</Link></td>
                   <td className="px-5 py-4 text-slate-200 max-w-xs truncate">{r.vulnerabilityId} · {titleFor(r.vulnerabilityId)}</td>
-                  <td className="px-5 py-4 text-slate-300 text-[13px]">{userById(r.assignedTo)?.name || '—'}</td>
-                  <td className="px-5 py-4 text-slate-300 text-[13px]">{r.status}</td>
+                  {/* Real persisted assignee via the shared user display;
+                      '—' only when genuinely unassigned. The API already
+                      returns assigned_to — the old `.name` lookup matched
+                      nothing on real user objects. */}
+                  <td className="px-5 py-4 text-slate-300 text-[13px]">{r.assignedTo ? displayUser(userById(r.assignedTo)) : '—'}</td>
+                  <td className="px-5 py-4 text-slate-300 text-[13px]">{getRemediationDisplay(r)}</td>
                   <td className="px-5 py-4 text-slate-400 text-[13px]"><Mono>{r.dueDate || '—'}</Mono></td>
                 </tr>
               ))}

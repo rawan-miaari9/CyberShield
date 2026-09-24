@@ -3,6 +3,12 @@ from .models import AIAnalysis, Asset, AuditLog, Notification, RemediationTask, 
 
 
 class AssetSerializer(serializers.ModelSerializer):
+    # Day 9 Task 6: read-only DB aggregates (annotated in AssetViewSet).
+    # Lets the Assets page show TRUE per-asset totals without deriving
+    # counts from the paginated frontend findings array.
+    finding_count = serializers.IntegerField(read_only=True)
+    open_vulnerability_count = serializers.IntegerField(read_only=True)
+
     class Meta:
         model = Asset
         fields = [
@@ -15,11 +21,15 @@ class AssetSerializer(serializers.ModelSerializer):
             'criticality',
             'description',
             'is_active',
+            'finding_count',
+            'open_vulnerability_count',
             'created_at',
             'updated_at',
         ]
         read_only_fields = [
             'id',
+            'finding_count',
+            'open_vulnerability_count',
             'created_at',
             'updated_at',
         ]
@@ -87,6 +97,12 @@ class AIAnalysisSerializer(serializers.ModelSerializer):
 class VulnerabilitySerializer(serializers.ModelSerializer):
 
     ai_analyses = AIAnalysisSerializer(many=True, read_only=True)
+    # Day 9 Task 6: read-only asset id via the linked finding, so asset
+    # association never depends on the paginated frontend findings array.
+    asset = serializers.PrimaryKeyRelatedField(
+        source='finding.asset',
+        read_only=True,
+    )
 
     class Meta:
         model = Vulnerability
@@ -94,6 +110,7 @@ class VulnerabilitySerializer(serializers.ModelSerializer):
         fields = [
             'id',
             'finding',
+            'asset',
             'title',
             'description',
             'severity',

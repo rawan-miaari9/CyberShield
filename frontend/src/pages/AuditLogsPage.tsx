@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { useApp } from '../context/SecurityContext';
+import { useApp, canViewAuditLogs } from '../context/SecurityContext';
 import { Card, PageHeader, EmptyState, LoadingState, Mono } from '../components/ui';
 
 function formatWhen(iso: string): string {
@@ -17,7 +17,7 @@ function formatWhen(iso: string): string {
 
 export const AuditLogsPage: React.FC = () => {
   const { auditLogs, user, isLoading } = useApp();
-  const canView = user?.role === 'Administrator' || user?.role === 'Security Analyst';
+  const canView = canViewAuditLogs(user);
   if (!canView) {
     return (
       <div>

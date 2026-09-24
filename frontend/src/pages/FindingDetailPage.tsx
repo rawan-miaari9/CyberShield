@@ -1,20 +1,53 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { useApp } from '../context/SecurityContext';
+import type { SecurityFinding } from '../types';
 import { Card, SeverityBadge, Field, Mono, LoadingState, buttonPrimary, buttonGhost } from '../components/ui';
+import { api } from '../services/api';
 
 export const FindingDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { findings, assetById, updateFindingStatus, promoteFinding, isLoading } = useApp();
+  const { findings, assetById, updateFindingStatus, promoteFinding, isLoading, findingsLoading, findingsError } = useApp();
   const [msg, setMsg] = useState<string | null>(null);
   const [statusErr, setStatusErr] = useState<string | null>(null);
   const [impact, setImpact] = useState<number>(3);
   const [likelihood, setLikelihood] = useState<number>(3);
-  const finding = findings.find((f) => f.id === id);
+  const [promoteErr, setPromoteErr] = useState<string | null>(null);
+  const [promoting, setPromoting] = useState(false);
+  // Day 9 Task 5: the context holds one 50-row page, so a deep-linked
+  // finding may not be on the current page. Fall back to GET /findings/:id/.
+  const [remoteFinding, setRemoteFinding] = useState<SecurityFinding | null>(null);
+  const [remoteLoading, setRemoteLoading] = useState(false);
+  const localFinding = findings.find((f) => f.id === id);
+  const finding = localFinding || remoteFinding;
 
-  if (isLoading && !finding) {
+  useEffect(() => {
+    let cancelled = false;
+    if (localFinding || !id) {
+      setRemoteFinding(null);
+      return;
+    }
+    setRemoteLoading(true);
+    api.getFinding(id)
+      .then((f) => {
+        if (!cancelled) setRemoteFinding(f);
+      })
+      .catch(() => {
+        if (!cancelled) setRemoteFinding(null);
+      })
+      .finally(() => {
+        if (!cancelled) setRemoteLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, localFinding]);
+
+  const stillLoading = (isLoading || findingsLoading || remoteLoading) && !finding;
+
+  if (stillLoading) {
     return (
       <div>
         <Link to="/findings" className="text-sm text-cyan-300 hover:underline">← Back to findings</Link>
@@ -27,7 +60,9 @@ export const FindingDetailPage: React.FC = () => {
     return (
       <div>
         <Link to="/findings" className="text-sm text-cyan-300 hover:underline">← Back to findings</Link>
-        <Card className="p-10 mt-6 text-center text-slate-400">Finding not found.</Card>
+        <Card className="p-10 mt-6 text-center text-slate-400">
+          {findingsError ? 'Findings failed to load. Please retry from the Findings page.' : 'Finding not found.'}
+        </Card>
       </div>
     );
   }
@@ -35,10 +70,18 @@ export const FindingDetailPage: React.FC = () => {
   const asset = assetById(finding.assetId);
 
 const handlePromote = async () => {
-  const newId = await promoteFinding(finding.id, impact, likelihood);
+  setPromoteErr(null);
+  setPromoting(true);
+  try {
+    const newId = await promoteFinding(finding.id, impact, likelihood);
 
-  setMsg(`Promoted to ${newId}.`);
-  setTimeout(() => navigate(`/vulnerabilities/${newId}`), 900);
+    setMsg(`Promoted to ${newId}.`);
+    setTimeout(() => navigate(`/vulnerabilities/${newId}`), 900);
+  } catch (e) {
+    setPromoteErr(e instanceof Error ? e.message : 'Promotion failed.');
+  } finally {
+    setPromoting(false);
+  }
 };
   return (
     <div>
@@ -134,8 +177,12 @@ const handlePromote = async () => {
                 <option value={5}>5 - Very High</option>
               </select>
             </div>
-            <button onClick={handlePromote} disabled={finding.status === 'Promoted'} className={`${buttonPrimary} w-full justify-center`}>
-              {finding.status === 'Promoted' ? 'Already promoted' : 'Promote to vulnerability'}
+            {finding.status === 'New' && (
+              <p className="text-xs text-amber-300/90 mb-3 leading-relaxed">Only REVIEWED findings can be promoted — mark this finding as Reviewed above first.</p>
+            )}
+            {promoteErr && <div className="mb-3 p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-sm text-rose-300">{promoteErr}</div>}
+            <button onClick={handlePromote} disabled={finding.status === 'Promoted' || promoting} className={`${buttonPrimary} w-full justify-center`}>
+              {finding.status === 'Promoted' ? 'Already promoted' : promoting ? 'Promoting…' : 'Promote to vulnerability'}
             </button>
           </Card>
         </div>

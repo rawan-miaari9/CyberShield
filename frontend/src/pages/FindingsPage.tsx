@@ -1,11 +1,23 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useApp } from '../context/SecurityContext';
 import { Card, PageHeader, SeverityBadge, EmptyState, LoadingState, Mono, inputClass } from '../components/ui';
 import { api } from '../services/api';
 
 export const FindingsPage: React.FC = () => {
-  const { findings, assetById, isLoading, refreshFindings } = useApp();
+  const {
+    findings,
+    assetById,
+    findingsLoading,
+    findingsError,
+    findingsTotal,
+    findingsPage,
+    findingsNumPages,
+    findingsHasNext,
+    findingsHasPrevious,
+    loadFindingsPage,
+    refreshFindings,
+  } = useApp();
 
   const [zapStatus, setZapStatus] = useState<'unknown' | 'connected' | 'disconnected'>('unknown');
   const [zapVersion, setZapVersion] = useState('');
@@ -13,8 +25,26 @@ export const FindingsPage: React.FC = () => {
   const [syncingZap, setSyncingZap] = useState(false);
   const [syncMessage, setSyncMessage] = useState('');
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [sev, setSev] = useState('all');
   const [status, setStatus] = useState('all');
+
+  // Day 9 Task 5: filtering is server-side (?search=&severity=&status=) so a
+  // filter searches the whole findings table, not just the loaded page.
+  // Debounce the text search to avoid a request per keystroke.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search.trim()), 400);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  useEffect(() => {
+    loadFindingsPage(1, {
+      search: debouncedSearch || undefined,
+      severity: sev,
+      status,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedSearch, sev, status]);
 
   const handleTestZapConnection = async () => {
     setTestingZap(true);
@@ -55,15 +85,19 @@ export const FindingsPage: React.FC = () => {
       setSyncMessage('Sync failed. Please check the ZAP connection.');
     } finally {
       setSyncingZap(false);
-      
+
     }
 };
 
-  const filtered = useMemo(() => findings.filter((f) => {
-    const q = search.toLowerCase();
-    const matchQ = !q || f.title.toLowerCase().includes(q) || f.id.toLowerCase().includes(q) || (f.cwe || '').toLowerCase().includes(q);
-    return matchQ && (sev === 'all' || f.severity === sev) && (status === 'all' || f.status === status);
-  }), [findings, search, sev, status]);
+  const goToPage = (page: number) => {
+    loadFindingsPage(page, {
+      search: debouncedSearch || undefined,
+      severity: sev,
+      status,
+    });
+  };
+
+  const showLoading = findingsLoading && findings.length === 0 && !findingsError;
 
   return (
     <div>
@@ -155,7 +189,7 @@ export const FindingsPage: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/70">
-              {filtered.map((f) => (
+              {findings.map((f) => (
                 <tr key={f.id} className="hover:bg-slate-800/30 transition-colors">
                   <td className="px-5 py-4"><Link to={`/findings/${f.id}`} className="font-mono-code text-[13px] text-cyan-300 hover:underline">{f.id}</Link></td>
                   <td className="px-5 py-4 text-slate-100 max-w-xs"><Link to={`/findings/${f.id}`} className="hover:text-cyan-200">{f.title}</Link></td>
@@ -178,7 +212,51 @@ export const FindingsPage: React.FC = () => {
               ))}
             </tbody>
           </table>
-          {isLoading ? <LoadingState title="Loading findings…" /> : filtered.length === 0 && <EmptyState title="No findings match" hint="Adjust your search or filters." />}
+          {findingsError ? (
+            <div className="p-12 text-center" role="alert">
+              <p className="text-[15.5px] font-semibold text-rose-300">Couldn&apos;t load findings</p>
+              <p className="text-sm text-slate-500 mt-1.5">{findingsError} This is a load failure — not zero findings.</p>
+              <button
+                type="button"
+                onClick={() => goToPage(findingsPage)}
+                className="mt-4 px-4 py-2 rounded-lg bg-slate-800 text-sm text-slate-100 hover:bg-slate-700 transition-colors"
+              >
+                Retry
+              </button>
+            </div>
+          ) : showLoading ? (
+            <LoadingState title="Loading findings…" />
+          ) : findings.length === 0 ? (
+            <EmptyState title="No findings match" hint="Adjust your search or filters." />
+          ) : null}
+          {findingsLoading && findings.length > 0 && (
+            <p className="px-5 py-3 text-[12.5px] text-slate-500" role="status">Refreshing…</p>
+          )}
+        </div>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-5 py-4 border-t border-slate-800">
+          <p className="text-[13px] text-slate-500">
+            {findingsError
+              ? 'Total unavailable — findings failed to load.'
+              : `Showing ${findings.length} of ${findingsTotal} findings · Page ${findingsPage} of ${findingsNumPages}`}
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => goToPage(findingsPage - 1)}
+              disabled={!findingsHasPrevious || findingsLoading}
+              className="px-4 py-2 rounded-lg bg-slate-800 text-sm text-slate-100 hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              Previous
+            </button>
+            <button
+              type="button"
+              onClick={() => goToPage(findingsPage + 1)}
+              disabled={!findingsHasNext || findingsLoading}
+              className="px-4 py-2 rounded-lg bg-slate-800 text-sm text-slate-100 hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              Next
+            </button>
+          </div>
         </div>
       </Card>
     </div>

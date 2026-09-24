@@ -8,6 +8,7 @@ import type {
   SecurityFinding,
   User,
   Vulnerability,
+  VulnerabilityAIAnalysis,
 } from '../types';
 import { API_BASE_URL, USE_MOCK_DATA } from './config';
 import {
@@ -24,8 +25,12 @@ import {
 
 
 export const apiClient: AxiosInstance = axios.create({
+  // Day 9 Task 5: 4000ms was cancelling the large findings payload (and
+  // occasionally the N+1 audit-logs query). Pagination + select_related are
+  // the real fix; this modest bump to 10s is defensive headroom only — a
+  // single 50-row page now resolves in well under a second.
   baseURL: API_BASE_URL,
-  timeout: 4000,
+  timeout: 10000,
   headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
 });
 
@@ -121,20 +126,39 @@ type DjangoAsset = {
   criticality: string;
   description: string;
   is_active: boolean;
+  finding_count?: number;
+  open_vulnerability_count?: number;
   created_at: string;
   updated_at: string;
 };
+
+// Day 9 Task 6: backend Asset.ASSET_TYPE_CHOICES are codes (WEB_APP,
+// SERVER, NETWORK_DEVICE, OTHER) while the frontend AssetType union uses
+// display labels. Normalize at this mapping boundary so `a.type === type`
+// filtering works; DB values are never changed for display.
+function normalizeAssetType(s: string): Asset['type'] {
+  const u = String(s || '').toUpperCase();
+  if (u === 'WEB_APP' || u === 'WEB APPLICATION') return 'Web Application';
+  if (u === 'SERVER') return 'Server';
+  if (u === 'API') return 'API';
+  if (u === 'NETWORK_DEVICE' || u === 'NETWORK DEVICE') return 'Network Device';
+  if (u === 'DATABASE') return 'Database';
+  if (u === 'OTHER') return 'Other';
+  return (s as Asset['type']);
+}
 
 function mapDjangoAsset(asset: DjangoAsset): Asset {
   return {
     id: String(asset.id),
     name: asset.name,
-    type: asset.asset_type as Asset['type'],
+    type: normalizeAssetType(asset.asset_type),
     address: asset.url || asset.hostname || asset.ip_address || '',
     description: asset.description,
     owner: '',
     criticality: asset.criticality as Asset['criticality'],
     createdAt: asset.created_at,
+    findingCount: typeof asset.finding_count === 'number' ? asset.finding_count : undefined,
+    openVulnerabilityCount: typeof asset.open_vulnerability_count === 'number' ? asset.open_vulnerability_count : undefined,
   };
 }
 
@@ -203,6 +227,7 @@ function mapDjangoFinding(finding: DjangoSecurityFinding): SecurityFinding {
 type DjangoVulnerability = {
   id: number;
   finding: number;
+  asset?: number | null;
   title: string;
   description: string;
   severity: string;
@@ -219,8 +244,12 @@ type DjangoVulnerability = {
 };
 
 // Day 6: backend RemediationTask <-> frontend RemediationTask mapping.
-// No second lifecycle: backend OPEN/IN_PROGRESS/COMPLETED/CANCELLED map to
-// the closest frontend display states; fix info lives in description.
+// The backend enum is OPEN/IN_PROGRESS/COMPLETED/CANCELLED — there is no
+// REMEDIATED task state. The vulnerability lifecycle stays authoritative:
+// a task reads 'Remediated' only when the linked vulnerability is
+// REMEDIATED (see getRemediationDisplay in SecurityContext). The raw
+// backend value is preserved as backendStatus so the display derivation
+// never has to guess, and reloads always reflect server truth.
 function mapDjangoRemediationStatus(s: string): RemediationTask['status'] {
   const u = String(s || '').toUpperCase();
   if (u === 'IN_PROGRESS') return 'In Progress';
@@ -254,6 +283,7 @@ function mapDjangoRemediation(task: DjangoRemediation): RemediationTask {
     vulnerabilityId: String(task.vulnerability),
     assignedTo: task.assigned_to ? String(task.assigned_to) : null,
     status: mapDjangoRemediationStatus(task.status),
+    backendStatus: String(task.status || '').toUpperCase(),
     dueDate: task.due_date,
     notes: task.notes || '',
     proposedFix: task.description || '',
@@ -284,6 +314,7 @@ function mapDjangoNotification(n: DjangoNotification): AppNotification {
   ) as AppNotification['type'];
   return {
     id: String(n.id),
+    recipientId: String(n.recipient),
     title: n.title,
     message: n.message,
     type,
@@ -337,9 +368,10 @@ function mapDjangoVulnerability(
     title: vulnerability.title,
     description: vulnerability.description,
 
-    // Asset belongs to the related finding.
-    // We will resolve it from findingId in React.
-    assetId: '',
+    // Day 9 Task 6: backend now exposes the asset id directly (read-only
+    // `asset` via finding.asset). Older payloads without it fall back to
+    // resolving through findingId in React.
+    assetId: vulnerability.asset != null ? String(vulnerability.asset) : '',
 
     severity: normalizeSeverity(vulnerability.severity),
     impact: vulnerability.impact,
@@ -361,6 +393,35 @@ function mapDjangoVulnerability(
     proposedFix: vulnerability.remediation_guidance,
   };
 }
+type DjangoAIAnalysis = {
+  id: number;
+  vulnerability: number;
+  explanation: string;
+  potential_impact: string;
+  remediation_steps: string;
+  verification_steps: string;
+  provider: string;
+  model_name: string;
+  generated_by: number | null;
+  generated_by_name: string | null;
+  created_at: string;
+};
+
+function mapDjangoAIAnalysis(a: DjangoAIAnalysis): VulnerabilityAIAnalysis {
+  return {
+    id: String(a.id),
+    vulnerabilityId: String(a.vulnerability),
+    explanation: a.explanation,
+    potentialImpact: a.potential_impact,
+    remediationSteps: a.remediation_steps,
+    verificationSteps: a.verification_steps,
+    provider: a.provider,
+    modelName: a.model_name,
+    generatedBy: a.generated_by ? String(a.generated_by) : null,
+    generatedByName: a.generated_by_name,
+    createdAt: a.created_at,
+  };
+}
 async function fetchResource<T>(path: string, resource: string): Promise<T> {
   try {
     const res = await apiClient.get<T>(path);
@@ -368,6 +429,81 @@ async function fetchResource<T>(path: string, resource: string): Promise<T> {
   } catch (err) {
     throw toApiError(err, resource);
   }
+}
+
+/** Day 9 Task 5: DRF PageNumberPagination envelope for findings. */
+export interface PaginatedResponse<T> {
+  count: number;
+  next: string | null;
+  previous: string | null;
+  results: T[];
+}
+
+export interface FindingsFilters {
+  search?: string;
+  severity?: string;
+  status?: string;
+  /** Day 9 Task 6: asset-scoped listing for AssetDetailPage. */
+  asset?: string;
+}
+
+export interface FindingsPage {
+  items: SecurityFinding[];
+  count: number;
+  page: number;
+  pageSize: number;
+  numPages: number;
+  hasNext: boolean;
+  hasPrevious: boolean;
+}
+
+export interface FindingsStats {
+  total: number;
+  open: number;
+  new: number;
+  reviewed: number;
+  promoted: number;
+  dismissed: number;
+}
+
+export const FINDINGS_PAGE_SIZE = 50;
+
+function isPaginatedFindings(
+  data: unknown,
+): data is { count: number; next: string | null; previous: string | null; results: DjangoSecurityFinding[] } {
+  if (typeof data !== 'object' || data === null) return false;
+  const d = data as Record<string, unknown>;
+  return typeof d.count === 'number' && Array.isArray(d.results);
+}
+
+function buildFindingsPage(
+  data: DjangoSecurityFinding[] | { count: number; next: string | null; previous: string | null; results: DjangoSecurityFinding[] },
+  page: number,
+  pageSize: number,
+): FindingsPage {
+  if (isPaginatedFindings(data)) {
+    const count = data.count;
+    return {
+      items: data.results.map(mapDjangoFinding),
+      count,
+      page,
+      pageSize,
+      numPages: Math.max(1, Math.ceil(count / pageSize)),
+      hasNext: data.next !== null,
+      hasPrevious: data.previous !== null,
+    };
+  }
+  // Back-compat: if the backend ever returns a raw array, wrap it.
+  const items = (data as DjangoSecurityFinding[]).map(mapDjangoFinding);
+  return {
+    items,
+    count: items.length,
+    page,
+    pageSize,
+    numPages: 1,
+    hasNext: false,
+    hasPrevious: false,
+  };
 }
 
 /**
@@ -474,15 +610,94 @@ async syncZapFindings(assetId: string): Promise<{
   }
 },
 
+async getFindingsPage(
+  page = 1,
+  pageSize: number = FINDINGS_PAGE_SIZE,
+  filters: FindingsFilters = {},
+): Promise<FindingsPage> {
+  if (USE_MOCK_DATA) {
+    const q = (filters.search || '').toLowerCase();
+    const sev = (filters.severity || 'all').toLowerCase();
+    const st = (filters.status || 'all').toLowerCase();
+    const filtered = mockFindings.filter((f) => {
+      const matchQ =
+        !q ||
+        f.title.toLowerCase().includes(q) ||
+        f.id.toLowerCase().includes(q) ||
+        (f.cwe || '').toLowerCase().includes(q);
+      const matchSev = sev === 'all' || f.severity === sev;
+      const matchSt = st === 'all' || f.status.toLowerCase() === st;
+      const matchAsset = !filters.asset || String(f.assetId) === String(filters.asset);
+      return matchQ && matchSev && matchSt && matchAsset;
+    });
+    const count = filtered.length;
+    const start = (page - 1) * pageSize;
+    return {
+      items: filtered.slice(start, start + pageSize),
+      count,
+      page,
+      pageSize,
+      numPages: Math.max(1, Math.ceil(count / pageSize)),
+      hasNext: start + pageSize < count,
+      hasPrevious: page > 1,
+    };
+  }
+
+  const params: Record<string, string | number> = { page, page_size: pageSize };
+  if (filters.search) params.search = filters.search;
+  if (filters.severity && filters.severity !== 'all') params.severity = filters.severity;
+  if (filters.status && filters.status !== 'all') params.status = filters.status;
+  if (filters.asset) params.asset = filters.asset;
+  try {
+    const res = await apiClient.get<
+      DjangoSecurityFinding[] | PaginatedResponse<DjangoSecurityFinding>
+    >('findings/', { params });
+    return buildFindingsPage(res.data, page, pageSize);
+  } catch (err) {
+    throw toApiError(err, 'findings');
+  }
+},
+
+async getFindingsStats(): Promise<FindingsStats> {
+  if (USE_MOCK_DATA) {
+    const countBy = (s: string) =>
+      mockFindings.filter((f) => f.status === s).length;
+    const fresh = countBy('New');
+    const reviewed = countBy('Reviewed');
+    return {
+      total: mockFindings.length,
+      open: fresh + reviewed,
+      new: fresh,
+      reviewed,
+      promoted: countBy('Promoted'),
+      dismissed: mockFindings.filter((f) => f.status === 'Ignored').length,
+    };
+  }
+  return fetchResource<FindingsStats>('findings/stats/', 'findings statistics');
+},
+
+async getFinding(id: string): Promise<SecurityFinding> {
+  if (USE_MOCK_DATA) {
+    const found = mockFindings.find((f) => f.id === id);
+    if (!found) throw new Error('Finding not found.');
+    return found;
+  }
+  try {
+    const res = await apiClient.get<DjangoSecurityFinding>(`findings/${id}/`);
+    return mapDjangoFinding(res.data);
+  } catch (err) {
+    throw toApiError(err, 'finding');
+  }
+},
+
 async getFindings(): Promise<SecurityFinding[]> {
   if (USE_MOCK_DATA) return mockFindings;
 
-  const findings = await fetchResource<DjangoSecurityFinding[]>(
-    'findings/',
-    'findings'
-  );
-
-  return findings.map(mapDjangoFinding);
+  // Back-compat shim: returns the first page only. New code should use
+  // getFindingsPage() + getFindingsStats() so a 50-row page is never
+  // mistaken for the full findings table.
+  const first = await api.getFindingsPage(1, FINDINGS_PAGE_SIZE);
+  return first.items;
 },
 
 async reviewFinding(id: string): Promise<SecurityFinding> {
@@ -502,15 +717,19 @@ async promoteFinding(
   impact: number,
   likelihood: number
 ): Promise<Vulnerability> {
-  const vulnerability = await apiClient.post<DjangoVulnerability>(
-    `findings/${id}/promote/`,
-    {
-      impact,
-      likelihood,
-    }
-  );
+  try {
+    const vulnerability = await apiClient.post<DjangoVulnerability>(
+      `findings/${id}/promote/`,
+      {
+        impact,
+        likelihood,
+      }
+    );
 
-  return mapDjangoVulnerability(vulnerability.data);
+    return mapDjangoVulnerability(vulnerability.data);
+  } catch (err) {
+    throw toApiError(err, 'finding promotion');
+  }
 },
 
 async assignVulnerability(
@@ -630,9 +849,39 @@ async getAssets(): Promise<Asset[]> {
     }
   },
 
+  /**
+   * Persist a remediation task status change (PATCH remediation/:id/).
+   * Backend enum: OPEN / IN_PROGRESS / COMPLETED / CANCELLED. The assigned
+   * developer (or analyst/admin) may write; the backend enforces this and
+   * audits the change server-side. 'Remediated' has no backend task value —
+   * callers persist COMPLETED and synchronize the vulnerability lifecycle
+   * (IN_PROGRESS -> REMEDIATED); the display derivation then reads
+   * 'Remediated' from server truth on every load.
+   */
+  async updateRemediationTaskStatus(
+    id: string,
+    backendStatus: 'OPEN' | 'IN_PROGRESS' | 'COMPLETED'
+  ): Promise<RemediationTask> {
+    if (USE_MOCK_DATA) {
+      const found = mockRemediation.find((t) => t.id === id);
+      if (!found) throw new Error('Remediation task not found.');
+      return { ...found, status: mapDjangoRemediationStatus(backendStatus) };
+    }
+    try {
+      const res = await apiClient.patch<DjangoRemediation>(`remediation/${id}/`, {
+        status: backendStatus,
+      });
+      return mapDjangoRemediation(res.data);
+    } catch (err) {
+      throw toApiError(err, 'remediation status update');
+    }
+  },
+
   async getIntegrations(): Promise<ScannerIntegration[]> {
     if (USE_MOCK_DATA) return mockIntegrations;
-    return fetchResource<ScannerIntegration[]>('integrations/', 'scanner integrations');
+    // No backend /api/integrations/ route exists (scanner sync lives under
+    // findings/zap/*). Return empty instead of issuing a request that 404s.
+    return [];
   },
 
   async getNotifications(): Promise<AppNotification[]> {
@@ -670,16 +919,35 @@ async getAssets(): Promise<Asset[]> {
     return fetchResource<User[]>('users/', 'users');
   },
 
-  async syncScanner(id: string): Promise<{ imported: number }> {
-    if (USE_MOCK_DATA) return { imported: mockFindings.length };
+  async generateAIAnalysis(vulnerabilityId: string): Promise<VulnerabilityAIAnalysis> {
+    // Server-side Gemini generation only: never contacts an AI provider
+    // from React. Explicit analyst/admin action; backend RBAC applies.
     try {
-      const res = await apiClient.post(`integrations/${id}/sync/`, {});
-      const n = (res.data as { imported?: number })?.imported;
-      if (typeof n === 'number') return { imported: n };
-      throw new Error('Sync failed: the API did not return an import count.');
+      const res = await apiClient.post<DjangoAIAnalysis>(
+        `vulnerabilities/${vulnerabilityId}/ai-analysis/`,
+        {}
+      );
+      return mapDjangoAIAnalysis(res.data);
     } catch (err) {
-      throw toApiError(err, 'scanner sync');
+      throw toApiError(err, 'AI analysis generation');
     }
+  },
+
+  async getAIAnalyses(vulnerabilityId: string): Promise<VulnerabilityAIAnalysis[]> {
+    if (USE_MOCK_DATA) return [];
+    const items = await fetchResource<DjangoAIAnalysis[]>(
+      `vulnerabilities/${vulnerabilityId}/ai-analyses/`,
+      'AI analyses'
+    );
+    return items.map(mapDjangoAIAnalysis);
+  },
+
+  async syncScanner(_id: string): Promise<{ imported: number }> {
+    if (USE_MOCK_DATA) return { imported: mockFindings.length };
+    // The legacy POST integrations/:id/sync/ endpoint no longer exists and
+    // would only 404. ZAP sync is explicit per asset on the Findings page
+    // (api.syncZapFindings), so fail loudly instead of hiding a 404.
+    throw new Error('Scanner sync moved: use Sync Findings on the Findings page (OWASP ZAP Scanner).');
   },
 
   async testConnection(): Promise<{ ok: boolean; latencyMs: number; message: string }> {

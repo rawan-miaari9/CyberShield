@@ -1,9 +1,11 @@
 import datetime
 
 from django.contrib.auth.models import User
+from django.db.models import Count, Q
 
 from rest_framework import viewsets
 from rest_framework.decorators import action
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
 from rest_framework.response import Response
@@ -32,15 +34,75 @@ from .workflow import (
 from .zap_service import test_zap_connection, sync_zap_findings
 
 class AssetViewSet(viewsets.ModelViewSet):
-    queryset = Asset.objects.all().order_by('-created_at')
     serializer_class = AssetSerializer
     permission_classes = [IsAuthenticated]
 
+    def get_queryset(self):
+        # Day 9 Task 6: per-asset aggregates in the same query (no N+1).
+        # Open = vulnerability status NOT IN (VERIFIED, CLOSED), matching
+        # the established lifecycle definition used across the frontend.
+        return Asset.objects.annotate(
+            finding_count=Count('findings', distinct=True),
+            open_vulnerability_count=Count(
+                'findings__vulnerability',
+                filter=~Q(
+                    findings__vulnerability__status__in=['VERIFIED', 'CLOSED']
+                ),
+                distinct=True,
+            ),
+        ).all().order_by('-created_at')
+
+
+class FindingsPagination(PageNumberPagination):
+    """Day 9 Task 5: server-side pagination scoped to findings only.
+
+    Findings carry large text/JSON fields (description, evidence, raw_data)
+    and grow with every ZAP sync, so an unbounded list response times out.
+    Other endpoints stay unpaginated so existing array consumers keep working.
+    """
+    page_size = 50
+    page_size_query_param = 'page_size'
+    max_page_size = 200
+
 
 class SecurityFindingViewSet(viewsets.ModelViewSet):
-    queryset = SecurityFinding.objects.all().order_by('-imported_at')
     serializer_class = SecurityFindingSerializer
     permission_classes = [IsAuthenticated]
+    pagination_class = FindingsPagination
+
+    def get_queryset(self):
+        # select_related: the list serializer emits FK ids only, but the
+        # joins are near-free and keep any future nested use from going N+1.
+        qs = SecurityFinding.objects.select_related(
+            'integration', 'asset'
+        ).all().order_by('-imported_at')
+        params = self.request.query_params
+        # ?status= — accept backend UPPERCASE and frontend Title-case;
+        # frontend 'Ignored' maps to backend 'DISMISSED'.
+        raw_status = (params.get('status') or '').strip()
+        if raw_status and raw_status.lower() != 'all':
+            u = raw_status.upper()
+            if u in ('IGNORED', 'IGNORE'):
+                u = 'DISMISSED'
+            qs = qs.filter(status=u)
+        # ?severity= — case-insensitive (frontend sends lowercase).
+        raw_sev = (params.get('severity') or '').strip()
+        if raw_sev and raw_sev.lower() != 'all':
+            qs = qs.filter(severity__iexact=raw_sev)
+        # ?search= — title / external_id / cwe_id substring, or exact id.
+        raw_search = (params.get('search') or '').strip()
+        if raw_search:
+            q = Q(title__icontains=raw_search) | Q(
+                external_id__icontains=raw_search
+            ) | Q(cwe_id__icontains=raw_search)
+            if raw_search.isdigit():
+                q |= Q(id=int(raw_search))
+            qs = qs.filter(q)
+        # ?asset= — asset-scoped listing for AssetDetailPage (paginated).
+        raw_asset = (params.get('asset') or '').strip()
+        if raw_asset and raw_asset.isdigit():
+            qs = qs.filter(asset_id=int(raw_asset))
+        return qs
 
     def get_permissions(self):
         # Day 5 RBAC: analyst workflow actions require Administrator or
@@ -49,6 +111,32 @@ class SecurityFindingViewSet(viewsets.ModelViewSet):
         if self.action in ('review', 'promote', 'test_zap_connection', 'sync_zap_findings'):
             return [IsAdministratorOrSecurityAnalyst()]
         return [IsAuthenticated()]
+
+    @action(detail=False, methods=['get'], url_path='stats')
+    def stats(self, request):
+        """GET /api/findings/stats/ — lightweight aggregate counts.
+
+        The dashboard KPI (Open = NEW + REVIEWED) must not be derived from
+        a paginated first page. A single GROUP BY query returns the totals
+        without transferring hundreds of finding payloads.
+        """
+        rows = SecurityFinding.objects.values('status').annotate(
+            n=Count('id')
+        )
+        counts = {row['status']: row['n'] for row in rows}
+        new = counts.get('NEW', 0)
+        reviewed = counts.get('REVIEWED', 0)
+        promoted = counts.get('PROMOTED', 0)
+        dismissed = counts.get('DISMISSED', 0)
+        total = new + reviewed + promoted + dismissed
+        return Response({
+            'total': total,
+            'open': new + reviewed,
+            'new': new,
+            'reviewed': reviewed,
+            'promoted': promoted,
+            'dismissed': dismissed,
+        })
 
 
     @action(detail=False, methods=['get'], url_path='zap/test-connection')
@@ -182,9 +270,15 @@ class SecurityFindingViewSet(viewsets.ModelViewSet):
         )
 
 class VulnerabilityViewSet(viewsets.ModelViewSet):
-    queryset = Vulnerability.objects.prefetch_related('ai_analyses').all().order_by('-created_at')
     serializer_class = VulnerabilitySerializer
     permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        # select_related('finding'): the new read-only `asset` field walks
+        # finding.asset per row — join it up front instead of N+1 queries.
+        return Vulnerability.objects.select_related(
+            'finding'
+        ).prefetch_related('ai_analyses').all().order_by('-created_at')
 
     def get_permissions(self):
         # Day 5 RBAC: assign / due-date / verify are analyst-only.
@@ -381,9 +475,11 @@ class VulnerabilityViewSet(viewsets.ModelViewSet):
         vulnerability.status = 'VERIFIED'
         vulnerability.save()
 
-        # Day 6: audit + notify the assigned developer.
+        # Day 6: audit + notify the assigned developer — never the actor
+        # about their own action (a self-assigned analyst verifying their
+        # own item is informed by the response itself, not a notification).
         write_audit(request.user, 'VULNERABILITY_STATUS_CHANGE', 'Vulnerability', vulnerability.id, 'REMEDIATED', 'VERIFIED')
-        if vulnerability.assigned_to_id:
+        if vulnerability.assigned_to_id and vulnerability.assigned_to_id != request.user.id:
             notify(
                 vulnerability.assigned_to_id, 'SYSTEM',
                 f'Vulnerability {vulnerability.id} verified',
@@ -417,15 +513,18 @@ class VulnerabilityViewSet(viewsets.ModelViewSet):
         vulnerability.save()
 
         # Day 6: one audit row per transition + MVP notifications.
+        # Recipient rule: notify whoever must act NEXT, never the actor
+        # about their own action.
         write_audit(request.user, 'VULNERABILITY_STATUS_CHANGE', 'Vulnerability', vulnerability.id, old_status, target)
+        actor_id = getattr(request.user, 'id', None)
         if target == 'REMEDIATED':
             notify_many(
-                analyst_user_ids(), 'REMEDIATION',
+                [rid for rid in analyst_user_ids() if rid != actor_id], 'REMEDIATION',
                 f'Vulnerability {vulnerability.id} marked REMEDIATED',
                 f'{vulnerability.title} is ready for analyst verification.',
                 vulnerability=vulnerability,
             )
-        elif target == 'VERIFIED' and vulnerability.assigned_to_id:
+        elif target == 'VERIFIED' and vulnerability.assigned_to_id and vulnerability.assigned_to_id != actor_id:
             notify(
                 vulnerability.assigned_to_id, 'SYSTEM',
                 f'Vulnerability {vulnerability.id} verified',
@@ -433,8 +532,8 @@ class VulnerabilityViewSet(viewsets.ModelViewSet):
                 vulnerability=vulnerability,
             )
         elif target == 'CLOSED':
-            recipients = list(analyst_user_ids())
-            if vulnerability.assigned_to_id:
+            recipients = [rid for rid in analyst_user_ids() if rid != actor_id]
+            if vulnerability.assigned_to_id and vulnerability.assigned_to_id != actor_id:
                 recipients.append(vulnerability.assigned_to_id)
             notify_many(
                 recipients, 'SYSTEM',
@@ -636,6 +735,12 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     IT/Developer is denied at the API (HTTP 403), not just hidden in UI.
     """
 
-    queryset = AuditLog.objects.all().order_by('-created_at')
     serializer_class = AuditLogSerializer
     permission_classes = [IsAdministratorOrSecurityAnalyst]
+
+    def get_queryset(self):
+        # actor_name is a SerializerMethodField touching obj.actor per row;
+        # select_related avoids one User query per audit row (the ~2s load).
+        return AuditLog.objects.select_related('actor').all().order_by(
+            '-created_at'
+        )

@@ -34,6 +34,9 @@ export interface Asset {
   owner: string;
   criticality: Severity;
   createdAt: string;
+  /** Day 9 Task 6: TRUE backend aggregates — never derived from a page. */
+  findingCount?: number;
+  openVulnerabilityCount?: number;
 }
 
 export interface ScannerIntegration {
@@ -106,6 +109,8 @@ export interface RemediationTask {
   vulnerabilityId: string;
   assignedTo: string | null;
   status: RemediationStatus;
+  /** Raw backend enum (OPEN/IN_PROGRESS/COMPLETED/…). Absent on mock rows. */
+  backendStatus?: string;
   dueDate: string | null;
   notes: string;
   proposedFix: string;
@@ -125,8 +130,25 @@ export interface AIAnalysis {
   model: string;
 }
 
+/** Persisted server-side AI guidance (backend AIAnalysisSerializer shape). */
+export interface VulnerabilityAIAnalysis {
+  id: string;
+  vulnerabilityId: string;
+  explanation: string;
+  potentialImpact: string;
+  remediationSteps: string;
+  verificationSteps: string;
+  provider: string;
+  modelName: string;
+  generatedBy: string | null;
+  generatedByName: string | null;
+  createdAt: string;
+}
+
 export interface AppNotification {
   id: string;
+  /** Backend recipient user id. Absent only on local client-generated notes. */
+  recipientId?: string | null;
   title: string;
   message: string;
   type:

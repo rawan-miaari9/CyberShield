@@ -7,15 +7,41 @@ import type { RemediationStatus } from '../types';
 
 const flow: RemediationStatus[] = ['To Do', 'In Progress', 'Remediated', 'Awaiting Verification', 'Completed'];
 
+// Progress highlighting follows the same order as `flow`. 'Awaiting
+// Verification' is not a separate persisted state (the backend task enum
+// is OPEN/IN_PROGRESS/COMPLETED) — it shares the Remediated step.
+function flowIndex(status: RemediationStatus): number {
+  if (status === 'Awaiting Verification') return 3;
+  const i = flow.indexOf(status);
+  return i >= 0 ? i : 0;
+}
+
+// Same presentation as Dashboard Recent Activity (Day 9): browser locale,
+// local timezone. Invalid/missing values never leak raw text to the UI.
+function formatDateTime(ts: string | null | undefined): string {
+  if (!ts) return 'Date unavailable';
+  const t = new Date(ts).getTime();
+  if (Number.isNaN(t)) return 'Date unavailable';
+  return new Date(t).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 export const RemediationDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
-  const { remediation, vulnerabilities, userById, updateRemediationStatus, verifyVulnerability, saveRemediation, user, isLoading } = useApp();
+  const { remediation, vulnerabilities, userById, updateRemediationStatus, verifyVulnerability, saveRemediation, user, isLoading, getRemediationDisplay } = useApp();
   const [notes, setNotes] = useState('');
   const [verifyErr, setVerifyErr] = useState<string | null>(null);
   const [verifying, setVerifying] = useState(false);
   const [remMsg, setRemMsg] = useState<string | null>(null);
   const [remErr, setRemErr] = useState<string | null>(null);
   const [savingRem, setSavingRem] = useState(false);
+  const [statusErr, setStatusErr] = useState<string | null>(null);
+  const [changingStatus, setChangingStatus] = useState(false);
   const task = remediation.find((r) => r.id === id);
 
   if (isLoading && !task) {
@@ -38,6 +64,46 @@ export const RemediationDetailPage: React.FC = () => {
 
   const vuln = vulnerabilities.find((v) => v.id === task.vulnerabilityId);
   const isAnalyst = user?.role === 'Security Analyst' || user?.role === 'Administrator' || user?.role === 'Security Manager';
+  // Live display status: persisted task state + linked vulnerability
+  // lifecycle (survives reloads; never a local-only guess).
+  const displayStatus = getRemediationDisplay(task);
+  const currentStep = flowIndex(displayStatus);
+  // Only the assigned user (or an analyst) may advance the task — the
+  // backend enforces the same rule, this just gates the buttons.
+  const canWrite =
+    isAnalyst ||
+    (!!user && !!vuln && !!vuln.assignedTo && String(vuln.assignedTo) === String(user.id));
+  // The single valid next action for the current state (forward-only; the
+  // backend task endpoint itself is unguarded, so the UI must not invent
+  // backward/skip jumps).
+  const nextAction: { label: string; target: RemediationStatus; disabled?: boolean; hint?: string } | null = (() => {
+    if (!canWrite) return null;
+    if (displayStatus === 'To Do') return { label: 'Move to In Progress', target: 'In Progress' };
+    if (displayStatus === 'In Progress') {
+      if (vuln && vuln.status !== 'IN_PROGRESS' && vuln.status !== 'REMEDIATED') {
+        return {
+          label: 'Move to Remediated',
+          target: 'Remediated',
+          disabled: true,
+          hint: `Vulnerability ${vuln.id} is ${vuln.status.replace(/_/g, ' ')} — it must be In Progress before work can be marked Remediated.`,
+        };
+      }
+      return { label: 'Move to Remediated', target: 'Remediated' };
+    }
+    return null;
+  })();
+
+  const runStatusChange = async (target: RemediationStatus) => {
+    setStatusErr(null);
+    setChangingStatus(true);
+    try {
+      await updateRemediationStatus(task.id, target);
+    } catch (e) {
+      setStatusErr(e instanceof Error ? e.message : 'Status update failed.');
+    } finally {
+      setChangingStatus(false);
+    }
+  };
 
   const verify = async () => {
     setVerifyErr(null);
@@ -47,7 +113,7 @@ export const RemediationDetailPage: React.FC = () => {
       // Persisted Strict lifecycle: only REMEDIATED -> VERIFIED succeeds;
       // backend rejects anything else (no local-only status jump).
       await verifyVulnerability(vuln.id);
-      updateRemediationStatus(task.id, 'Completed');
+      await updateRemediationStatus(task.id, 'Completed');
     } catch (e) {
       setVerifyErr(e instanceof Error ? e.message : 'Verification failed.');
     } finally {
@@ -70,7 +136,7 @@ export const RemediationDetailPage: React.FC = () => {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <Card className="p-6 lg:col-span-2 space-y-6">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
-            <Field label="Status"><p>{task.status}</p></Field>
+            <Field label="Status"><p>{displayStatus}</p></Field>
             <Field label="Assigned to"><p>{(() => {
               const u = userById(task.assignedTo);
               if (!u) return '—';
@@ -78,7 +144,7 @@ export const RemediationDetailPage: React.FC = () => {
               return full || u.username || u.email || `User ${u.id}`;
             })()}</p></Field>
             <Field label="Due"><Mono>{task.dueDate || '—'}</Mono></Field>
-            <Field label="Updated"><Mono>{task.updatedAt}</Mono></Field>
+            <Field label="Updated"><Mono>{formatDateTime(task.updatedAt)}</Mono></Field>
           </div>
           <Field label="Proposed fix"><p>{task.proposedFix}</p></Field>
           <Field label="Remediation notes"><p>{task.notes || '—'}</p></Field>
@@ -121,20 +187,43 @@ export const RemediationDetailPage: React.FC = () => {
           <h3 className="text-base font-semibold text-white mb-4">Workflow</h3>
           <div className="space-y-2 mb-5">
             {flow.map((s, i) => (
-              <div key={s} className={`flex items-center gap-3 p-2.5 rounded-xl text-sm ${flow.indexOf(task.status) >= i ? 'bg-cyan-500/10 border border-cyan-500/25 text-cyan-200' : 'text-slate-500'}`}>
+              <div key={s} className={`flex items-center gap-3 p-2.5 rounded-xl text-sm ${currentStep >= i ? 'bg-cyan-500/10 border border-cyan-500/25 text-cyan-200' : 'text-slate-500'}`}>
                 <span className="w-6 h-6 rounded-full bg-slate-800 flex items-center justify-center text-xs font-bold">{i + 1}</span>{s}
               </div>
             ))}
           </div>
           <div className="space-y-2">
-            {flow.filter((s) => s !== task.status && s !== 'Completed').map((s) => (
-              <button key={s} onClick={() => updateRemediationStatus(task.id, s)} className={`${buttonGhost} w-full justify-center !text-xs`}>Move to {s}</button>
-            ))}
-            {verifyErr && <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-sm text-rose-300">{verifyErr}</div>}
-            <button onClick={verify} disabled={!isAnalyst || verifying} title={isAnalyst ? 'Verify as analyst' : 'Only an analyst can verify'} className={`${buttonPrimary} w-full justify-center !text-xs`}>
-              {verifying ? 'Verifying…' : 'Verify & complete (analyst)'}
-            </button>
-            {!isAnalyst && <p className="text-xs text-slate-500">Verification requires the Security Analyst role.</p>}
+            {statusErr && <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-sm text-rose-300">{statusErr}</div>}
+            {nextAction ? (
+              <>
+                <button
+                  key={nextAction.target}
+                  onClick={() => runStatusChange(nextAction.target)}
+                  disabled={changingStatus || nextAction.disabled}
+                  className={`${buttonGhost} w-full justify-center !text-xs`}
+                >
+                  {changingStatus ? 'Saving…' : nextAction.label}
+                </button>
+                {nextAction.hint && <p className="text-xs text-slate-500">{nextAction.hint}</p>}
+              </>
+            ) : displayStatus === 'Remediated' && !isAnalyst ? (
+              <p className="text-xs text-slate-500">Work marked Remediated — awaiting analyst verification.</p>
+            ) : null}
+            {!canWrite && displayStatus !== 'Completed' && (
+              <p className="text-xs text-slate-500">Only the assigned user or a Security Analyst can advance this task.</p>
+            )}
+            {displayStatus === 'Remediated' && isAnalyst && vuln && vuln.status === 'REMEDIATED' && (
+              <>
+                {verifyErr && <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-sm text-rose-300">{verifyErr}</div>}
+                <button onClick={verify} disabled={verifying} title="Verify as analyst" className={`${buttonPrimary} w-full justify-center !text-xs`}>
+                  {verifying ? 'Verifying…' : 'Verify & complete (analyst)'}
+                </button>
+              </>
+            )}
+            {displayStatus === 'Completed' && (
+              <p className="text-xs text-slate-500">Verified and complete — no further actions.</p>
+            )}
+            {!isAnalyst && displayStatus !== 'Completed' && <p className="text-xs text-slate-500">Verification requires the Security Analyst role.</p>}
           </div>
         </Card>
       </div>

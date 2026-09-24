@@ -64,6 +64,10 @@ export const VulnerabilitiesPage: React.FC = () => {
                   <td className="px-5 py-4"><SeverityBadge severity={v.severity} /></td>
                   <td className="px-5 py-4 text-slate-300 text-[13px]">
                     {(() => {
+                      // Day 9 Task 6: asset id now arrives on the
+                      // vulnerability itself; the finding lookup is a
+                      // fallback for older payloads.
+                      if (v.assetId) return assetById(v.assetId)?.name || v.assetId;
                       const finding = findings.find((f) => f.id === v.findingId);
                       return finding
                         ? assetById(finding.assetId)?.name || finding.assetId

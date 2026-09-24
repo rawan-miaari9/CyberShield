@@ -79,10 +79,10 @@ export const mockIntegrations: ScannerIntegration[] = [
 ];
 
 export const mockNotifications: AppNotification[] = [
-  { id: 'N-001', title: 'Critical vulnerability created', message: 'VULN-004 (reflected input) was created with Critical risk.', type: 'critical_vulnerability', read: false, createdAt: '2026-09-14 09:50 UTC', link: '/vulnerabilities/VULN-004' },
-  { id: 'N-002', title: 'Vulnerability assigned', message: 'VULN-002 was assigned to Jonas Vance.', type: 'assigned', read: false, createdAt: '2026-09-15 08:12 UTC', link: '/vulnerabilities/VULN-002' },
-  { id: 'N-003', title: 'Remediation submitted for verification', message: 'REM-002 is awaiting analyst verification.', type: 'submitted_verification', read: true, createdAt: '2026-09-15 11:30 UTC', link: '/remediation/REM-002' },
-  { id: 'N-004', title: 'Scanner sync completed', message: 'OWASP ZAP sync imported 8 findings.', type: 'scanner_sync', read: true, createdAt: '2026-09-15 10:05 UTC', link: '/findings' },
+  { id: 'N-001', recipientId: 'USR-002', title: 'Critical vulnerability created', message: 'VULN-004 (reflected input) was created with Critical risk.', type: 'critical_vulnerability', read: false, createdAt: '2026-09-14 09:50 UTC', link: '/vulnerabilities/VULN-004' },
+  { id: 'N-002', recipientId: 'USR-002', title: 'Vulnerability assigned', message: 'VULN-002 was assigned to Jonas Vance.', type: 'assigned', read: false, createdAt: '2026-09-15 08:12 UTC', link: '/vulnerabilities/VULN-002' },
+  { id: 'N-003', recipientId: 'USR-003', title: 'Remediation submitted for verification', message: 'REM-002 is awaiting analyst verification.', type: 'submitted_verification', read: true, createdAt: '2026-09-15 11:30 UTC', link: '/remediation/REM-002' },
+  { id: 'N-004', recipientId: 'USR-001', title: 'Scanner sync completed', message: 'OWASP ZAP sync imported 8 findings.', type: 'scanner_sync', read: true, createdAt: '2026-09-15 10:05 UTC', link: '/findings' },
 ];
 
 export const mockAuditLogs: AuditLog[] = [

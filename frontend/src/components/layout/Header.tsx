@@ -47,7 +47,10 @@ export const Header: React.FC = () => {
     setBellOpen(false);
   }, [location.pathname]);
 
-  const latest = notifications.slice(0, 5);
+  // Personal inbox: never show rows addressed to other users, even though
+  // analysts are served everyone's notifications for the overview page.
+  const mine = notifications.filter((n) => n.recipientId === undefined || n.recipientId === null || String(n.recipientId) === String(user?.id));
+  const latest = mine.slice(0, 5);
   const displayName = user
   ? `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username
   : 'CyberShield';

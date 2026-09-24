@@ -5,7 +5,7 @@ import { useApp } from '../context/SecurityContext';
 import { Card, PageHeader, SeverityBadge, EmptyState, LoadingState, Mono, inputClass } from '../components/ui';
 
 export const AssetsPage: React.FC = () => {
-  const { assets, findings, vulnerabilities, isLoading } = useApp();
+  const { assets, findings, vulnerabilities, isLoading, isDemoMode } = useApp();
   const [search, setSearch] = useState('');
   const [type, setType] = useState('all');
 
@@ -13,6 +13,26 @@ export const AssetsPage: React.FC = () => {
     const q = search.toLowerCase();
     return (!q || a.name.toLowerCase().includes(q) || a.address.toLowerCase().includes(q)) && (type === 'all' || a.type === type);
   });
+
+  // Day 9 Task 6: per-asset counts come from backend aggregates
+  // (finding_count / open_vulnerability_count), never from the paginated
+  // findings page. In demo mode the aggregates are absent and the local
+  // mock collection is complete, so filtering it is truthful there.
+  const findingCountFor = (a: (typeof assets)[number]) =>
+    typeof a.findingCount === 'number'
+      ? a.findingCount
+      : isDemoMode
+        ? findings.filter((x) => x.assetId === a.id).length
+        : 0;
+  const openVulnCountFor = (a: (typeof assets)[number]) => {
+    if (typeof a.openVulnerabilityCount === 'number') return a.openVulnerabilityCount;
+    const assetOf = (v: (typeof vulnerabilities)[number]) => {
+      if (v.assetId) return v.assetId;
+      const f = findings.find((x) => x.id === v.findingId);
+      return f ? f.assetId : '';
+    };
+    return vulnerabilities.filter((x) => String(assetOf(x)) === String(a.id) && !['VERIFIED', 'CLOSED'].includes(x.status)).length;
+  };
 
   return (
     <div>
@@ -33,8 +53,8 @@ export const AssetsPage: React.FC = () => {
       </Card>
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
         {filtered.map((a) => {
-          const f = findings.filter((x) => x.assetId === a.id).length;
-          const v = vulnerabilities.filter((x) => x.assetId === a.id && !['VERIFIED', 'CLOSED'].includes(x.status)).length;
+          const f = findingCountFor(a);
+          const v = openVulnCountFor(a);
           return (
             <Link key={a.id} to={`/assets/${a.id}`}>
               <Card className="p-6 hover:border-slate-700 transition-colors h-full">

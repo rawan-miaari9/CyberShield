@@ -14,7 +14,7 @@ import {
   Users,
   Settings,
 } from 'lucide-react';
-import { useApp } from '../../context/SecurityContext';
+import { useApp, canViewAuditLogs } from '../../context/SecurityContext';
 
 const sections: Array<{ heading: string; items: Array<{ to: string; label: string; icon: React.ElementType; accent?: string }> }> = [
   { heading: 'Overview', items: [{ to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard }] },
@@ -47,7 +47,7 @@ const sections: Array<{ heading: string; items: Array<{ to: string; label: strin
 
 export const Sidebar: React.FC = () => {
   const { unreadCount, vulnerabilities, user } = useApp();
-  const canViewAuditLogs = user?.role === 'Administrator' || user?.role === 'Security Analyst';
+  const canViewAuditLogsNav = canViewAuditLogs(user);
   const criticalOpen = vulnerabilities.filter(
     (v) => v.severity === 'critical' && !['VERIFIED', 'CLOSED'].includes(v.status),
   ).length;
@@ -81,7 +81,7 @@ export const Sidebar: React.FC = () => {
               {section.heading}
             </div>
             <div className="space-y-1">
-              {section.items.filter((item) => item.to !== '/audit-logs' || canViewAuditLogs).map((item) => {
+              {section.items.filter((item) => item.to !== '/audit-logs' || canViewAuditLogsNav).map((item) => {
                 const badge = badgeFor(item.to);
                 const isAI = item.accent === 'ai';
                 return (
@@ -150,7 +150,7 @@ export const Sidebar: React.FC = () => {
           <p className="text-[13px] text-slate-400 leading-relaxed">
             {criticalOpen > 0
               ? `${criticalOpen} critical item${criticalOpen > 1 ? 's need' : ' needs'} triage right now.`
-              : 'No critical backlog. Scanners are in sync.'}
+              : 'No critical backlog. Scanner health available from Findings.'}
           </p>
         </div>
       </div>

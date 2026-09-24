@@ -72,6 +72,12 @@ export const IntegrationsPage: React.FC = () => {
           </Card>
         ))}
       </div>
+      {integrations.length === 0 && (
+        <Card className="p-6 mt-6">
+          <h3 className="text-base font-semibold text-white mb-2">OWASP ZAP sync</h3>
+          <p className="text-sm text-slate-400">Scanner sync is performed per asset from the Findings page (OWASP ZAP Scanner panel). No separate integration records are required for the MVP.</p>
+        </Card>
+      )}
       <Card className="p-6 mt-6">
         <h3 className="text-base font-semibold text-white mb-2">Other scanners</h3>
         <p className="text-sm text-slate-400">Additional scanner integrations are out of scope for the MVP and are not shown as active.</p>
