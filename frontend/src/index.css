@@ -52,6 +52,14 @@
     color-scheme: dark;
   }
 
+  input[type="date"] {
+    color-scheme: dark;
+  }
+  input[type="date"]::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    opacity: 0.65;
+  }
+
   select option {
     background-color: #111827;
     color: #e2e8f0;
