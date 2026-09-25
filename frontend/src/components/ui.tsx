@@ -149,3 +149,38 @@ export const SectionTitle: React.FC<{ title: string; hint?: string; right?: Reac
     {right}
   </div>
 );
+
+export const ConfirmDialog: React.FC<{
+  title: string;
+  message: string;
+  confirmLabel: string;
+  cancelLabel?: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}> = ({ title, message, confirmLabel, cancelLabel = 'Cancel', onConfirm, onCancel }) => {
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onCancel();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onCancel]);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onCancel}>
+      <Card className="p-6 w-full max-w-sm">
+        <div onClick={(e) => e.stopPropagation()}>
+          <h3 className="text-base font-semibold text-white mb-2">{title}</h3>
+          <p className="text-sm text-slate-400 leading-relaxed">{message}</p>
+          <div className="flex justify-end gap-3 mt-5">
+            <button onClick={onCancel} className="px-4 py-2 rounded-lg bg-slate-800 text-sm text-slate-100 hover:bg-slate-700 transition-colors">
+              {cancelLabel}
+            </button>
+            <button onClick={onConfirm} className="px-4 py-2 rounded-lg bg-cyan-600 text-sm text-white hover:bg-cyan-500 transition-colors">
+              {confirmLabel}
+            </button>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+};

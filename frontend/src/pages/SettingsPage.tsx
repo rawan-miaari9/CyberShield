@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useApp } from '../context/SecurityContext';
-import { Card, PageHeader, buttonGhost } from '../components/ui';
+import { Card, PageHeader, buttonGhost, ConfirmDialog } from '../components/ui';
 
 export const SettingsPage: React.FC = () => {
   const { user, logout } = useApp();
+  const [confirmLogout, setConfirmLogout] = useState(false);
   const fullName = [user?.first_name, user?.last_name].filter(Boolean).join(' ').trim();
   const identity = user?.name || fullName || user?.username || '—';
 
@@ -18,8 +19,17 @@ export const SettingsPage: React.FC = () => {
       </Card>
       <Card className="p-6 mt-6">
         <h3 className="text-base font-semibold text-white mb-2">Session</h3>
-        <button onClick={logout} className={buttonGhost}>Log out</button>
+        <button onClick={() => setConfirmLogout(true)} className={buttonGhost}>Log out</button>
       </Card>
+      {confirmLogout && (
+        <ConfirmDialog
+          title="Log out?"
+          message="You will be signed out of CyberShield on this device."
+          confirmLabel="Log out"
+          onConfirm={() => { setConfirmLogout(false); logout(); }}
+          onCancel={() => setConfirmLogout(false)}
+        />
+      )}
     </div>
   );
 };
