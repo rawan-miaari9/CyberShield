@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Bell } from 'lucide-react';
 import { useApp } from '../context/SecurityContext';
+import { displayUser } from './VulnerabilityDetailPage';
 import { Card, PageHeader, Mono, LoadingState, buttonGhost } from '../components/ui';
 
 function formatWhen(iso: string): string {
@@ -17,7 +18,7 @@ function formatWhen(iso: string): string {
 }
 
 export const NotificationsPage: React.FC = () => {
-  const { notifications, markNotificationRead, markAllNotificationsRead, isLoading } = useApp();
+  const { notifications, markNotificationRead, markAllNotificationsRead, userById, isLoading } = useApp();
   const [err, setErr] = useState<string | null>(null);
 
   return (
@@ -47,7 +48,7 @@ export const NotificationsPage: React.FC = () => {
                 {!n.read && <span className="text-xs px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/25">Unread</span>}
               </div>
               <p className="text-sm text-slate-400 mt-1">{n.message}</p>
-              <p className="text-xs text-slate-500 mt-1.5"><Mono>{formatWhen(n.createdAt)}</Mono></p>
+              <p className="text-xs text-slate-500 mt-1.5"><Mono>{formatWhen(n.createdAt)}</Mono>{n.recipientId ? (() => { const u = userById(n.recipientId); return ` · To: ${u ? displayUser(u) : `User ${n.recipientId}`}`; })() : ''}</p>
               {n.link && <Link to={n.link} className="text-sm text-cyan-300 hover:underline mt-1 inline-block">Open related item →</Link>}
             </div>
             {!n.read && (

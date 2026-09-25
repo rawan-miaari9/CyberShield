@@ -1,7 +1,7 @@
 import datetime
 
 from django.contrib.auth.models import User
-from django.db.models import Count, Q
+from django.db.models import Count, ProtectedError, Q
 
 from rest_framework import viewsets
 from rest_framework.decorators import action
@@ -31,11 +31,37 @@ from .workflow import (
     write_audit,
 )
 
-from .zap_service import test_zap_connection, sync_zap_findings
+from .zap_service import test_zap_connection, sync_zap_findings, start_zap_spider, get_zap_spider_status
 
 class AssetViewSet(viewsets.ModelViewSet):
     serializer_class = AssetSerializer
     permission_classes = [IsAuthenticated]
+
+    def get_permissions(self):
+        # Reads stay open to any authenticated role (assignment dropdown,
+        # asset pages, ZAP target selector). Writes are analyst-only, like
+        # the assign / due-date / verify actions below.
+        if self.action in ('create', 'update', 'partial_update', 'destroy'):
+            return [IsAdministratorOrSecurityAnalyst()]
+        return [IsAuthenticated()]
+
+    def destroy(self, request, *args, **kwargs):
+        # Assets with security history are PROTECTed at the model level:
+        # never cascade. Translate the raw ProtectedError into a clear
+        # 409 so the UI can explain why the asset stays put.
+        instance = self.get_object()
+        try:
+            return super().destroy(request, *args, **kwargs)
+        except ProtectedError:
+            linked = instance.findings.count()
+            return Response(
+                {'error': (
+                    'Cannot delete this asset because it has linked security '
+                    f'findings ({linked}). Preserve or reassign its security '
+                    'history before deleting it.'
+                )},
+                status=status.HTTP_409_CONFLICT
+            )
 
     def get_queryset(self):
         # Day 9 Task 6: per-asset aggregates in the same query (no N+1).
@@ -108,9 +134,36 @@ class SecurityFindingViewSet(viewsets.ModelViewSet):
         # Day 5 RBAC: analyst workflow actions require Administrator or
         # Security Analyst. Reads/writes otherwise stay IsAuthenticated
         # so IT/Developer keeps read access without analyst powers.
-        if self.action in ('review', 'promote', 'test_zap_connection', 'sync_zap_findings'):
+        if self.action in ('review', 'promote', 'test_zap_connection', 'sync_zap_findings', 'start_zap_scan'):
             return [IsAdministratorOrSecurityAnalyst()]
         return [IsAuthenticated()]
+
+    def _reject_promoted_transition(self, request, instance):
+        """PROMOTED is terminal: reject any direct status edit away from it."""
+        if instance.status != 'PROMOTED':
+            return None
+        try:
+            target = request.data.get('status') if hasattr(request, 'data') else None
+        except Exception:
+            target = None
+        if target is None or str(target).upper() == 'PROMOTED':
+            return None
+        return Response(
+            {'error': 'This finding has already been promoted.'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    def update(self, request, *args, **kwargs):
+        rejected = self._reject_promoted_transition(request, self.get_object())
+        if rejected is not None:
+            return rejected
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        rejected = self._reject_promoted_transition(request, self.get_object())
+        if rejected is not None:
+            return rejected
+        return super().partial_update(request, *args, **kwargs)
 
     @action(detail=False, methods=['get'], url_path='stats')
     def stats(self, request):
@@ -184,7 +237,77 @@ class SecurityFindingViewSet(viewsets.ModelViewSet):
             result,
             status=status.HTTP_503_SERVICE_UNAVAILABLE
         )
-        
+
+    @action(detail=False, methods=['post'], url_path='zap/scan')
+    def start_zap_scan(self, request):
+        """POST /api/findings/zap/scan/  {asset_id: <id>}.
+
+        Administrator/Security Analyst only. The scan target is derived
+        strictly from the registered Asset's URL — a client-supplied URL
+        is never accepted. Starts a ZAP Spider crawl (passive discovery;
+        never an Active Scan); importing results stays a separate analyst
+        action via the existing zap/sync endpoint.
+        """
+        asset_id = request.data.get("asset_id")
+
+        try:
+            asset = Asset.objects.get(id=asset_id)
+        except (Asset.DoesNotExist, ValueError, TypeError):
+            return Response(
+                {"error": "Asset not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        target = (asset.url or "").strip()
+        if not target:
+            return Response(
+                {"error": "Asset has no usable URL to scan."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        result = start_zap_spider(target)
+
+        if not result["success"]:
+            return Response(
+                result,
+                status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+
+        return Response(
+            {
+                "scan_id": result["scan_id"],
+                "asset_id": asset.id,
+                "asset_name": asset.name,
+                "target": target,
+                "status": "running",
+            },
+            status=status.HTTP_202_ACCEPTED
+        )
+
+    @action(detail=False, methods=['get'], url_path='zap/scan-status')
+    def zap_scan_status(self, request):
+        """GET /api/findings/zap/scan-status/?scan_id=<id>.
+
+        Any authenticated user may poll. Returns progress 0-100 with a
+        frontend-friendly status; completed scans are NOT auto-synced.
+        """
+        result = get_zap_spider_status(request.query_params.get("scan_id", ""))
+
+        if not result["success"]:
+            return Response(
+                result,
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        return Response(
+            {
+                "scan_id": result["scan_id"],
+                "progress": result["progress"],
+                "status": "completed" if result["progress"] >= 100 else "running",
+            },
+            status=status.HTTP_200_OK
+        )
+
     @action(detail=True, methods=['post'])
     def review(self, request, pk=None):
         finding = self.get_object()
@@ -285,9 +408,12 @@ class VulnerabilityViewSet(viewsets.ModelViewSet):
         # 'transition' stays IsAuthenticated: role rules are enforced
         # inside _check_lifecycle so assigned IT/Developers can advance
         # their own items while VERIFY/CLOSE stay analyst-only.
-        # Day 8: AI generation is analyst-only; reading past analyses
-        # stays IsAuthenticated like the vulnerability itself.
-        if self.action in ('assign', 'set_due_date', 'verify', 'generate_ai_analysis'):
+        # AI generation reaches the action as IsAuthenticated; the
+        # object-level assignee rule is enforced inside
+        # generate_ai_analysis (analysts + the assigned developer only).
+        # Reading past analyses stays IsAuthenticated like the
+        # vulnerability itself.
+        if self.action in ('assign', 'set_due_date', 'verify'):
             return [IsAdministratorOrSecurityAnalyst()]
         return [IsAuthenticated()]
 
@@ -350,6 +476,56 @@ class VulnerabilityViewSet(viewsets.ModelViewSet):
                 )
             return None
         return None
+
+    def _sync_linked_tasks(self, vulnerability, user, event):
+        """Keep linked RemediationTasks in step with the vulnerability lifecycle.
+
+        - 'started' (ASSIGNED -> IN_PROGRESS): OPEN tasks move to
+          IN_PROGRESS; when no task exists one is created IN_PROGRESS
+          (assigned to the developer), so a single action starts work on
+          both records.
+        - 'verified' (REMEDIATED -> VERIFIED): open tasks move to COMPLETED.
+        - IN_PROGRESS -> REMEDIATED deliberately touches no task:
+          COMPLETED is reserved for analyst verification, so the task
+          stays IN_PROGRESS (awaiting verification) meanwhile.
+        """
+        from django.utils import timezone
+        if event == 'started':
+            tasks = list(RemediationTask.objects.filter(vulnerability=vulnerability))
+            if not tasks:
+                task = RemediationTask.objects.create(
+                    vulnerability=vulnerability,
+                    title=f'Remediation for vulnerability {vulnerability.id}',
+                    assigned_to=vulnerability.assigned_to,
+                    status='IN_PROGRESS',
+                )
+                write_audit(
+                    user, 'REMEDIATION_CREATED', 'RemediationTask', task.id,
+                    None, {'vulnerability': vulnerability.id, 'status': task.status},
+                )
+            else:
+                for task in tasks:
+                    if task.status != 'OPEN':
+                        continue
+                    task.status = 'IN_PROGRESS'
+                    task.save(update_fields=['status', 'updated_at'])
+                    write_audit(
+                        user, 'REMEDIATION_UPDATED', 'RemediationTask', task.id,
+                        {'status': 'OPEN'}, {'status': task.status},
+                    )
+        elif event == 'verified':
+            for task in RemediationTask.objects.filter(vulnerability=vulnerability):
+                if task.status in ('COMPLETED', 'CANCELLED'):
+                    continue
+                old = task.status
+                task.status = 'COMPLETED'
+                if not task.completed_at:
+                    task.completed_at = timezone.now()
+                task.save(update_fields=['status', 'completed_at', 'updated_at'])
+                write_audit(
+                    user, 'REMEDIATION_UPDATED', 'RemediationTask', task.id,
+                    {'status': old}, {'status': task.status},
+                )
 
     def _reject_invalid_direct_status(self, request, instance=None):
         """Block bypass of the lifecycle via generic PUT/PATCH status edits."""
@@ -475,6 +651,10 @@ class VulnerabilityViewSet(viewsets.ModelViewSet):
         vulnerability.status = 'VERIFIED'
         vulnerability.save()
 
+        # Linked remediation work completes here: COMPLETED is reserved
+        # for analyst verification, so the verify action owns it.
+        self._sync_linked_tasks(vulnerability, request.user, 'verified')
+
         # Day 6: audit + notify the assigned developer — never the actor
         # about their own action (a self-assigned analyst verifying their
         # own item is informed by the response itself, not a notification).
@@ -511,6 +691,13 @@ class VulnerabilityViewSet(viewsets.ModelViewSet):
         old_status = vulnerability.status
         vulnerability.status = target
         vulnerability.save()
+
+        # One canonical developer action drives both records: starting
+        # work also moves linked OPEN tasks to IN_PROGRESS (creating one
+        # when none exists). Marking REMEDIATED intentionally leaves tasks
+        # IN_PROGRESS — completion happens at verification, not here.
+        if target == 'IN_PROGRESS':
+            self._sync_linked_tasks(vulnerability, request.user, 'started')
 
         # Day 6: one audit row per transition + MVP notifications.
         # Recipient rule: notify whoever must act NEXT, never the actor
@@ -552,9 +739,25 @@ class VulnerabilityViewSet(viewsets.ModelViewSet):
         Day 8: explicitly-requested Gemini guidance only (never automatic).
         On success persists one AIAnalysis row (history is append-only);
         on provider failure returns an error with no DB write and no
-        lifecycle change. Administrator/Security Analyst only.
+        lifecycle change. Administrator / Security Analyst, or the
+        IT/Developer the vulnerability is assigned to; anyone else gets
+        403 without the generation service being called.
         """
         vulnerability = self.get_object()
+
+        role = self._caller_role(request.user)
+        is_analyst = role in ('Administrator', 'Security Analyst')
+        assigned_id = vulnerability.assigned_to_id
+        is_assignee = (
+            assigned_id is not None
+            and getattr(request.user, 'id', None) is not None
+            and int(assigned_id) == int(request.user.id)
+        )
+        if not (is_analyst or is_assignee):
+            return Response(
+                {'error': 'Only the assigned user, Security Analyst or Administrator can generate AI analysis.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
 
         result = analyze_vulnerability(vulnerability)
         if not result.get('success'):

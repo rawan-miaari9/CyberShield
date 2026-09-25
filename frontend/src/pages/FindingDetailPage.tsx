@@ -68,6 +68,8 @@ export const FindingDetailPage: React.FC = () => {
   }
 
   const asset = assetById(finding.assetId);
+  // PROMOTED is terminal: never offer or send status changes for it.
+  const isPromoted = finding.status === 'Promoted';
 
 const handlePromote = async () => {
   setPromoteErr(null);
@@ -93,7 +95,10 @@ const handlePromote = async () => {
         <div>
           <div className="flex items-center gap-3 mb-2">
             <Mono className="text-sm text-cyan-300 font-semibold">{finding.id}</Mono>
-            <SeverityBadge severity={finding.severity} />
+            <span title="Severity imported from the external scanner">
+              <SeverityBadge severity={finding.severity} />
+            </span>
+            <span className="text-xs text-slate-500">Scanner Severity</span>
             <span className="text-xs px-2.5 py-1 rounded-full bg-slate-800 text-slate-200 border border-slate-700">{finding.status}</span>
           </div>
           <h1 className="text-2xl font-bold text-white">{finding.title}</h1>
@@ -127,16 +132,18 @@ const handlePromote = async () => {
               {statusErr && <div className="mb-2 p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-sm text-rose-300">{statusErr}</div>}
               <div className="flex flex-wrap gap-2 mt-1">
                 {(['New', 'Reviewed', 'Ignored'] as const).map((s) => (
-                  <button key={s} onClick={async () => {
+                  <button key={s} disabled={isPromoted} title={isPromoted ? 'Promoted findings cannot change status.' : undefined} onClick={async () => {
+                    if (isPromoted) return;
                     setStatusErr(null);
                     try {
                       await updateFindingStatus(finding.id, s);
                     } catch (e) {
                       setStatusErr(e instanceof Error ? e.message : 'Status update failed.');
                     }
-                  }} className={`${buttonGhost} !px-3 !py-1.5 !text-xs ${finding.status === s ? '!border-cyan-500/50 !text-cyan-300' : ''}`}>{s}</button>
+                  }} className={`${buttonGhost} !px-3 !py-1.5 !text-xs ${finding.status === s ? '!border-cyan-500/50 !text-cyan-300' : ''} ${isPromoted ? 'opacity-40 cursor-not-allowed' : ''}`}>{s}</button>
                 ))}
               </div>
+              {isPromoted && <p className="text-xs text-slate-500 mt-2 leading-relaxed">Promoted findings cannot change status.</p>}
             </Field>
           </Card>
           <Card className="p-6">

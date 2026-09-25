@@ -15,6 +15,23 @@ function formatWhen(iso: string): string {
   });
 }
 
+// Single-key audit payloads (e.g. '{"status":"OPEN"}') display as just
+// the value (OPEN); plain values, multi-key objects, arrays, and
+// unparsable values pass through unchanged so no detail is lost.
+function formatAuditValue(value: string | null): string {
+  if (!value) return '—';
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const keys = Object.keys(parsed as Record<string, unknown>);
+      if (keys.length === 1) return String((parsed as Record<string, unknown>)[keys[0]]);
+    }
+  } catch {
+    /* not JSON — fall through to the raw value */
+  }
+  return value;
+}
+
 export const AuditLogsPage: React.FC = () => {
   const { auditLogs, user, isLoading } = useApp();
   const canView = canViewAuditLogs(user);
@@ -52,7 +69,7 @@ export const AuditLogsPage: React.FC = () => {
                   <td className="px-5 py-4 text-slate-200 text-[13px]">{a.user}</td>
                   <td className="px-5 py-4 text-slate-200 text-[13px]">{a.action.replace(/_/g, ' ')}</td>
                   <td className="px-5 py-4 text-[13px]"><span className="text-slate-400">{a.entityType} </span><Mono className="text-cyan-300">{a.entityId}</Mono></td>
-                  <td className="px-5 py-4 text-[13px] text-slate-400">{a.oldValue || '—'} → {a.newValue || '—'}</td>
+                  <td className="px-5 py-4 text-[13px] text-slate-400">{formatAuditValue(a.oldValue)} → {formatAuditValue(a.newValue)}</td>
                 </tr>
               ))}
             </tbody>

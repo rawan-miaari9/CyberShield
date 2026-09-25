@@ -1,11 +1,20 @@
 import React from 'react';
-import { Outlet } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 import { useApp } from '../../context/SecurityContext';
 
 export const AppLayout: React.FC = () => {
   const { apiError, isDemoMode } = useApp();
+  const { pathname } = useLocation();
+  const mainRef = React.useRef<HTMLElement>(null);
+
+  // The <main> below (flex-1 overflow-y-auto) is the real scroll owner:
+  // the outer layout is h-screen overflow-hidden, so window never scrolls.
+  // Reset the main-content container on every route change.
+  React.useEffect(() => {
+    mainRef.current?.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  }, [pathname]);
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[#0b0f17] text-slate-100">
@@ -21,7 +30,7 @@ export const AppLayout: React.FC = () => {
             </div>
           </div>
         )}
-        <main className="flex-1 overflow-y-auto relative">
+        <main ref={mainRef} className="flex-1 overflow-y-auto relative">
           <div className="absolute inset-0 cyber-grid-bg pointer-events-none" />
           <div className="relative max-w-6xl mx-auto p-6 lg:p-8">
             <Outlet />

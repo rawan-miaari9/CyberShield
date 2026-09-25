@@ -24,7 +24,18 @@ export const Header: React.FC = () => {
   const [menuOpen, setMenuOpen] = useState(false);
   const [bellOpen, setBellOpen] = useState(false);
   const [bellErr, setBellErr] = useState<string | null>(null);
+  const [globalSearch, setGlobalSearch] = useState('');
   const bellRef = useRef<HTMLDivElement | null>(null);
+
+  // Mirror the route in the global box (submit-on-Enter only — no live
+  // search): show the active ?search= on /findings, clear anywhere else.
+  useEffect(() => {
+    if (location.pathname === '/findings') {
+      setGlobalSearch(new URLSearchParams(location.search).get('search') || '');
+    } else {
+      setGlobalSearch('');
+    }
+  }, [location.pathname, location.search]);
 
   // Close the popover on outside click, Escape, or route change.
   useEffect(() => {
@@ -93,14 +104,32 @@ const initials = displayName
       </div>
 
       <div className="flex items-center gap-3.5">
-        <div className="hidden md:flex items-center gap-2.5 px-4 py-3 rounded-xl bg-white/[0.03] border border-slate-800 w-[300px] focus-within:border-slate-600 transition-colors">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            const q = globalSearch.trim();
+            navigate(q ? `/findings?search=${encodeURIComponent(q)}` : '/findings');
+          }}
+          className="hidden md:flex items-center gap-2.5 px-4 py-3 rounded-xl bg-white/[0.03] border border-slate-800 w-[300px] focus-within:border-slate-600 transition-colors"
+        >
           <Search className="w-5 h-5 text-slate-600 shrink-0" />
           <input
+            value={globalSearch}
+            onChange={(e) => {
+              const next = e.target.value;
+              setGlobalSearch(next);
+              // Clearing the box fully on /findings?search=… drops the
+              // param (replace, no history spam); FindingsPage's existing
+              // URL sync then clears its search and restores the list.
+              if (next === '' && location.pathname === '/findings' && new URLSearchParams(location.search).has('search')) {
+                navigate('/findings', { replace: true });
+              }
+            }}
             placeholder="Search vulns, assets, CVEs…"
+            aria-label="Search findings"
             className="bg-transparent flex-1 text-[15px] text-slate-200 placeholder-slate-600 focus:outline-none min-w-0"
           />
-          <kbd className="text-[11px] px-1.5 py-0.5 rounded-md bg-white/5 border border-white/10 text-slate-500 shrink-0">⌘K</kbd>
-        </div>
+        </form>
 
         <div className="relative" ref={bellRef}>
           <button

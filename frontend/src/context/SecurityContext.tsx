@@ -10,7 +10,7 @@ import type {
   Vulnerability,
 } from '../types';
 import { api, FINDINGS_PAGE_SIZE } from '../services/api';
-import type { FindingsFilters, FindingsStats } from '../services/api';
+import type { CreateAssetInput, FindingsFilters, FindingsStats } from '../services/api';
 import { USE_MOCK_DATA } from '../services/config';
 import { calculateRiskScore, riskLevelForScore } from '../utils/risk';
 
@@ -55,6 +55,9 @@ interface AppContextType {
   updateVulnerabilityStatus: (id: string, status: Vulnerability['status']) => Promise<void>;
   assignVulnerability: (id: string, userId: string | null) => Promise<void>;
   updateVulnerabilityDueDate: (id: string, dueDate: string) => Promise<void>;
+  createAsset: (input: CreateAssetInput) => Promise<Asset>;
+  updateAsset: (id: string, patch: Partial<CreateAssetInput>) => Promise<void>;
+  deleteAsset: (id: string) => Promise<void>;
   verifyVulnerability: (id: string) => Promise<void>;
   saveRemediation: (vulnerabilityId: string, input: { notes: string; proposedFix: string }) => Promise<void>;
   updateRemediationStatus: (id: string, status: RemediationTask['status']) => Promise<void>;
@@ -346,6 +349,17 @@ const login = useCallback(async (username: string, password: string) => {
     }
   }, []);
 
+  // The vulnerability transition/verify endpoints now synchronize the
+  // linked remediation task server-side — re-fetch tasks after those
+  // actions so both records display the synced state without a reload.
+  const refreshRemediation = useCallback(async () => {
+    try {
+      const tasks = await api.getRemediationTasks();
+      setRemediation(tasks);
+    } catch {
+      /* keep existing */
+    }
+  }, []);
   const markNotificationRead = useCallback(async (id: string) => {
     const updated = await api.markNotificationRead(id);
     setNotifications((prev) => prev.map((n) => (n.id === id ? updated : n)));
@@ -423,6 +437,11 @@ const login = useCallback(async (username: string, password: string) => {
 
   const updateFindingStatus = useCallback(
     async (id: string, status: SecurityFinding['status']) => {
+      // PROMOTED is terminal: never mutate local state or call the API.
+      const current = findings.find((f) => f.id === id);
+      if (current?.status === 'Promoted') {
+        throw new Error('This finding has already been promoted.');
+      }
       // Day 6: REVIEWED persists via the backend (server-audited as
       // FINDING_REVIEWED). Other local states have no backend endpoint.
       if (status === 'Reviewed') {
@@ -435,7 +454,7 @@ const login = useCallback(async (username: string, password: string) => {
       setFindings((prev) => prev.map((f) => (f.id === id ? { ...f, status } : f)));
       appendAudit(setAuditLogs, user?.email || 'unknown', 'FINDING_STATUS_CHANGE', 'SecurityFinding', id, null, status);
     },
-    [user, refreshAuditLogs, refreshFindingsStats],
+    [user, findings, refreshAuditLogs, refreshFindingsStats],
   );
 
   const promoteFinding = useCallback(
@@ -479,8 +498,9 @@ const login = useCallback(async (username: string, password: string) => {
       // Day 6: status changes are audited + notified server-side.
       await refreshAuditLogs();
       await refreshNotifications();
+      await refreshRemediation();
     },
-    [refreshAuditLogs, refreshNotifications],
+    [refreshAuditLogs, refreshNotifications, refreshRemediation],
   );
 
   const assignVulnerability = useCallback(
@@ -499,8 +519,35 @@ const login = useCallback(async (username: string, password: string) => {
     [refreshAuditLogs, refreshNotifications],
   );
 
-  const updateVulnerabilityDueDate = useCallback(
-    async (id: string, dueDate: string) => {
+  const createAsset = useCallback(async (input: CreateAssetInput): Promise<Asset> => {
+    const created = await api.createAsset(input);
+    // Shared state update only — Assets page and the Findings ZAP asset
+    // selector read the same array, so both show the new asset at once.
+    setAssets((prev) => [created, ...prev]);
+    return created;
+  }, []);
+
+  const updateAsset = useCallback(async (id: string, patch: Partial<CreateAssetInput>): Promise<void> => {
+    const updated = await api.updateAsset(id, patch);
+    // PATCH responses omit the annotated aggregates — keep the existing
+    // counts so an edited card never flashes 0 findings/vulns.
+    setAssets((prev) => prev.map((a) => (
+      String(a.id) === String(id)
+        ? {
+          ...updated,
+          findingCount: updated.findingCount ?? a.findingCount,
+          openVulnerabilityCount: updated.openVulnerabilityCount ?? a.openVulnerabilityCount,
+        }
+        : a
+    )));
+  }, []);
+
+  const deleteAsset = useCallback(async (id: string): Promise<void> => {
+    await api.deleteAsset(id);
+    setAssets((prev) => prev.filter((a) => String(a.id) !== String(id)));
+  }, []);
+
+  const updateVulnerabilityDueDate = useCallback(    async (id: string, dueDate: string) => {
       if (!dueDate) {
         throw new Error('Please select a due date.');
       }
@@ -520,11 +567,14 @@ const login = useCallback(async (username: string, password: string) => {
       setVulnerabilities((prev) =>
         prev.map((v) => (v.id === id ? updated : v)),
       );
-      // Day 6: verification is audited + notified server-side.
+      // Day 6: verification is audited + notified server-side. The linked
+      // remediation task completes in the same backend action — refresh it
+      // so the Remediation page shows Completed without a second click.
       await refreshAuditLogs();
       await refreshNotifications();
+      await refreshRemediation();
     },
-    [refreshAuditLogs, refreshNotifications],
+    [refreshAuditLogs, refreshNotifications, refreshRemediation],
   );
 
   const saveRemediation = useCallback(
@@ -550,12 +600,13 @@ const login = useCallback(async (username: string, password: string) => {
       // Day 9 remediation persistence fix: status changes are PATCHed to
       // the backend (server-audited as REMEDIATION_UPDATED) instead of
       // living only in local state where any re-fetch wiped them.
-      // Backend enum is OPEN/IN_PROGRESS/COMPLETED — 'Remediated' additionally
-      // advances the linked vulnerability IN_PROGRESS -> REMEDIATED (the
-      // authoritative lifecycle); the display derivation then reads
-      // 'Remediated' from server truth on every load. Backward jumps are
-      // rejected: the backend task endpoint has no guarded workflow, so the
-      // UI must not invent backward/skip transitions.
+      // Developer lifecycle steps are canonical on the vulnerability
+      // (the backend syncs the linked task in the same request); the
+      // Remediation page links there instead of duplicating buttons.
+      // Backend enum is OPEN/IN_PROGRESS/COMPLETED — COMPLETED is
+      // reserved for analyst verification. Backward jumps are rejected:
+      // the backend task endpoint has no guarded workflow, so the UI
+      // must not invent backward/skip transitions.
       const task = remediation.find((r) => r.id === id);
       if (!task) throw new Error('Remediation task not found.');
       const vuln = vulnerabilities.find((v) => v.id === task.vulnerabilityId);
@@ -578,27 +629,28 @@ const login = useCallback(async (username: string, password: string) => {
       }
 
       if (status === 'Remediated') {
-        // Vulnerability lifecycle first (authoritative): only a real
-        // IN_PROGRESS vulnerability can advance; an already-REMEDIATED one
-        // (e.g. advanced from the vulnerability page) is accepted as-is.
+        // Canonical developer action: the vulnerability transition owns
+        // this step. The backend leaves the task IN_PROGRESS (awaiting
+        // verification) — COMPLETED is reserved for analyst verification,
+        // so this path never persists COMPLETED early.
         if (vuln && vuln.status === 'IN_PROGRESS') {
           const updated = await api.transitionVulnerability(vuln.id, 'REMEDIATED');
           setVulnerabilities((prev) => prev.map((v) => (v.id === updated.id ? updated : v)));
           await refreshNotifications();
+          await refreshRemediation();
         } else if (vuln && vuln.status !== 'REMEDIATED') {
           throw new Error(
             `Cannot mark Remediated while vulnerability ${vuln.id} is ${vuln.status.replace(/_/g, ' ')}. Advance it to In Progress first.`,
           );
         }
-        replaceTask(await api.updateRemediationTaskStatus(id, 'COMPLETED'));
-        await refreshAuditLogs();
         return;
       }
 
       if (status === 'Completed') {
         // Final closure stays analyst-only in the UI (backend additionally
-        // guards verification itself). Normally already COMPLETED via the
-        // Remediated step; this persists the terminal state explicitly.
+        // guards verification itself). Normally the verify action already
+        // completed the task server-side; this persists the terminal state
+        // explicitly as a fallback.
         const role = user?.role;
         if (role !== 'Administrator' && role !== 'Security Analyst' && role !== 'Security Manager') {
           throw new Error('Only a Security Analyst can complete verification.');
@@ -610,21 +662,24 @@ const login = useCallback(async (username: string, password: string) => {
 
       throw new Error(`Invalid transition to ${status}. Only the next workflow step is allowed.`);
     },
-    [remediation, vulnerabilities, user, refreshAuditLogs, refreshNotifications],
+    [remediation, vulnerabilities, user, refreshAuditLogs, refreshNotifications, refreshRemediation],
   );
 
-  // Live display status for a remediation task. The persisted backend task
-  // state (backendStatus) is combined with the linked vulnerability
-  // lifecycle so reloads always show server truth: a VERIFIED/CLOSED vuln
-  // -> Completed; a COMPLETED task on a still-open vuln -> Remediated; IN_PROGRESS -> In
-  // Progress; otherwise To Do. Rows without backendStatus (demo mocks)
-  // pass through their literal status untouched.
+  // Live display status: the canonical Vulnerability lifecycle is the
+  // source of truth, so the task presents from it — never a manual task
+  // workflow. VERIFIED/CLOSED -> Completed; REMEDIATED -> Awaiting
+  // Verification (even for legacy OPEN tasks, which sync on verify);
+  // IN_PROGRESS -> In Progress. Otherwise the persisted task state
+  // applies. Rows without backendStatus (demo mocks) pass through their
+  // literal status untouched.
   const getRemediationDisplay = useCallback(
     (task: RemediationTask): RemediationTask['status'] => {
-      if (!task.backendStatus) return task.status;
       const vuln = vulnerabilities.find((v) => v.id === task.vulnerabilityId);
       const vs = vuln?.status;
       if (vs === 'VERIFIED' || vs === 'CLOSED') return 'Completed';
+      if (vs === 'REMEDIATED') return 'Awaiting Verification';
+      if (vs === 'IN_PROGRESS') return 'In Progress';
+      if (!task.backendStatus) return task.status;
       if (task.backendStatus === 'COMPLETED') return 'Remediated';
       if (task.backendStatus === 'IN_PROGRESS') return 'In Progress';
       return 'To Do';
@@ -661,11 +716,11 @@ const login = useCallback(async (username: string, password: string) => {
       getFindingById, vulnerabilities, assets, remediation, integrations,
       notifications, auditLogs, users, isLoading, apiError, isDemoMode: USE_MOCK_DATA, markNotificationRead, markAllNotificationsRead,
       updateFindingStatus, refreshFindings, promoteFinding, updateVulnerabilityStatus, assignVulnerability,
-      updateVulnerabilityDueDate, verifyVulnerability, saveRemediation, updateRemediationStatus, syncScanner,
+      updateVulnerabilityDueDate, createAsset, updateAsset, deleteAsset, verifyVulnerability, saveRemediation, updateRemediationStatus, syncScanner,
       unreadCount: notifications.filter((n) => !n.read && isMine(n)).length,
       assetById, userById, authReady, getRemediationDisplay,
     }),
-    [user, token, login, logout, findings, findingsLoading, findingsError, findingsStats, findingsTotal, findingsPage, findingsNumPages, findingsHasNext, findingsHasPrevious, findingsFilters, loadFindingsPage, getFindingById, vulnerabilities, assets, remediation, integrations, notifications, auditLogs, users, isLoading, apiError, authReady, markNotificationRead, markAllNotificationsRead, updateFindingStatus, refreshFindings, promoteFinding, updateVulnerabilityStatus, assignVulnerability, updateVulnerabilityDueDate, verifyVulnerability, saveRemediation, updateRemediationStatus, syncScanner, assetById, userById, isMine, getRemediationDisplay],
+    [user, token, login, logout, findings, findingsLoading, findingsError, findingsStats, findingsTotal, findingsPage, findingsNumPages, findingsHasNext, findingsHasPrevious, findingsFilters, loadFindingsPage, getFindingById, vulnerabilities, assets, remediation, integrations, notifications, auditLogs, users, isLoading, apiError, authReady, markNotificationRead, markAllNotificationsRead, updateFindingStatus, refreshFindings, promoteFinding, updateVulnerabilityStatus, assignVulnerability, updateVulnerabilityDueDate, createAsset, updateAsset, deleteAsset, verifyVulnerability, saveRemediation, updateRemediationStatus, syncScanner, assetById, userById, isMine, getRemediationDisplay],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

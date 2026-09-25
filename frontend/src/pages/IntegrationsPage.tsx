@@ -67,7 +67,7 @@ export const IntegrationsPage: React.FC = () => {
               <button onClick={() => handleSync(s.id)} disabled={busyId === s.id} className={buttonPrimary}>
                 <RefreshCw className={`w-4 h-4 ${busyId === s.id ? 'animate-spin' : ''}`} /> {busyId === s.id ? 'Syncing…' : 'Sync findings'}
               </button>
-              <button onClick={handleTest} className={buttonGhost}>Configure</button>
+              <button onClick={handleTest} className={buttonGhost}>Test connection</button>
             </div>
           </Card>
         ))}

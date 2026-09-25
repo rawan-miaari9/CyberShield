@@ -42,7 +42,7 @@ class AdminOnlyView(APIView):
 class UserListView(APIView):
     """Safe user list for the vulnerability-assignment dropdown (Day 5 MVP).
 
-    Returns id/username/email/first/last/role only — never passwords.
+    Returns id/username/email/first/last/role/is_active only — never passwords.
     Requires authentication; any authenticated role may read (writes are
     still restricted by the analyst-only actions in security/views.py).
     """
@@ -69,5 +69,6 @@ class UserListView(APIView):
                 'first_name': u.first_name,
                 'last_name': u.last_name,
                 'role': role,
+                'is_active': u.is_active,
             })
         return Response(data)

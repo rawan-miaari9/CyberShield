@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import React, { useEffect, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useApp } from '../context/SecurityContext';
 import { Card, PageHeader, SeverityBadge, EmptyState, LoadingState, Mono, inputClass } from '../components/ui';
 import { api } from '../services/api';
@@ -8,6 +8,7 @@ export const FindingsPage: React.FC = () => {
   const {
     findings,
     assetById,
+    assets,
     findingsLoading,
     findingsError,
     findingsTotal,
@@ -24,10 +25,73 @@ export const FindingsPage: React.FC = () => {
   const [testingZap, setTestingZap] = useState(false);
   const [syncingZap, setSyncingZap] = useState(false);
   const [syncMessage, setSyncMessage] = useState('');
-  const [search, setSearch] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [zapAssetId, setZapAssetId] = useState('3');
+  // Scan Website (ZAP Spider) state. scan_id lives in component state
+  // only; polling stops at 100%, on error, on asset change, or unmount.
+  // Sync Findings stays a separate explicit analyst action — never auto.
+  const [scanId, setScanId] = useState<string | null>(null);
+  const [scanProgress, setScanProgress] = useState<number | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [scanStarting, setScanStarting] = useState(false);
+  const [scanMessage, setScanMessage] = useState('');
+  const [scanDone, setScanDone] = useState(false);
+  const [syncDone, setSyncDone] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopPolling = () => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  };
+
+  const clearScan = () => {
+    stopPolling();
+    setScanId(null);
+    setScanProgress(null);
+    setScanning(false);
+    setScanStarting(false);
+    setScanMessage('');
+    setScanDone(false);
+    setSyncDone(false);
+  };
+
+  // Timer cleanup on unmount.
+  useEffect(() => () => stopPolling(), []);
+
+  // A new target invalidates the previous scan's state/progress.
+  const handleZapAssetChange = (nextId: string) => {
+    setZapAssetId(nextId);
+    clearScan();
+  };
+  // If the selected ZAP target disappears (e.g. asset deleted), fall
+  // back to OWASP Juice Shop when present, else the first asset.
+  // Never triggers a sync — selection only.
+  useEffect(() => {
+    if (assets.length > 0 && !assets.some((a) => String(a.id) === String(zapAssetId))) {
+      const juice = assets.find((a) => String(a.id) === '3');
+      setZapAssetId(String((juice || assets[0]).id));
+    }
+  }, [assets, zapAssetId]);
+  // Global header search navigates here as ?search= — seed state from it
+  // so the FIRST request already carries the filter. (Previously the page
+  // mounted with empty state, fired an unfiltered page-1 load, and only
+  // then applied the param after debounce — the heavy unfiltered response
+  // could resolve last and overwrite the filtered rows, since nothing
+  // orders concurrent loads.)
+  const [searchParams] = useSearchParams();
+  const paramSearch = searchParams.get('search') || '';
+  const [search, setSearch] = useState(paramSearch);
+  const [debouncedSearch, setDebouncedSearch] = useState(paramSearch.trim());
   const [sev, setSev] = useState('all');
   const [status, setStatus] = useState('all');
+  // Adopt later ?search= navigations while mounted (URL stays source of
+  // truth, including param removal); local typing never triggers this
+  // because it doesn't change the param.
+  useEffect(() => {
+    if (paramSearch !== search) setSearch(paramSearch);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paramSearch]);
 
   // Day 9 Task 5: filtering is server-side (?search=&severity=&status=) so a
   // filter searches the whole findings table, not just the loaded page.
@@ -72,22 +136,87 @@ export const FindingsPage: React.FC = () => {
     setSyncMessage('');
 
     try {
-      const result = await api.syncZapFindings('3');
+      const result = await api.syncZapFindings(zapAssetId);
 
       setZapStatus('connected');
 
+      // Sync supersedes the scan step: hide the scan-completion prompt
+      // and report the sync result (created/duplicates/total preserved).
+      setScanDone(false);
+      setScanMessage('');
+      setScanProgress(null);
+      setSyncDone(true);
       setSyncMessage(
-        `Sync complete: ${result.created} new, ${result.duplicates} duplicates, ${result.total} total.`
+        `Findings synchronized successfully: ${result.created} new, ${result.duplicates} duplicates, ${result.total} total.`
       );
       await refreshFindings();
 
     } catch {
+      setSyncDone(false);
       setSyncMessage('Sync failed. Please check the ZAP connection.');
     } finally {
       setSyncingZap(false);
 
     }
 };
+
+  const pollScan = (id: string) => {
+    stopPolling();
+    pollRef.current = setInterval(async () => {
+      try {
+        const st = await api.getZapScanStatus(id);
+        const progress = Math.max(0, Math.min(100, Number(st.progress) || 0));
+        setScanProgress(progress);
+        if (progress >= 100) {
+          stopPolling();
+          setScanning(false);
+          setScanDone(true);
+          setScanMessage('Scan completed successfully. You can now sync the findings.');
+        }
+      } catch (e) {
+        stopPolling();
+        setScanning(false);
+        setScanMessage(e instanceof Error ? e.message : 'Scan status check failed.');
+      }
+    }, 2500);
+  };
+
+  const handleScanWebsite = async () => {
+    // Single in-flight scan from this page: the button is disabled while
+    // running, and this guard covers repeated clicks before state settles.
+    if (scanning || scanStarting || !zapAssetId) return;
+    clearScan();
+    setScanStarting(true);
+    setScanMessage('Starting scan…');
+    try {
+      const started = await api.startZapScan(zapAssetId);
+      setScanId(started.scan_id);
+      setScanProgress(0);
+      setScanStarting(false);
+      setScanning(true);
+      setScanMessage('');
+      // Immediate first poll so progress appears without waiting ~2.5s.
+      try {
+        const st = await api.getZapScanStatus(started.scan_id);
+        const progress = Math.max(0, Math.min(100, Number(st.progress) || 0));
+        setScanProgress(progress);
+        if (progress >= 100) {
+          setScanning(false);
+          setScanDone(true);
+          setScanMessage('Scan completed successfully. You can now sync the findings.');
+          return;
+        }
+      } catch (e) {
+        setScanning(false);
+        setScanMessage(e instanceof Error ? e.message : 'Scan status check failed.');
+        return;
+      }
+      pollScan(started.scan_id);
+    } catch (e) {
+      setScanStarting(false);
+      setScanMessage(e instanceof Error ? e.message : 'Could not start the ZAP scan.');
+    }
+  };
 
   const goToPage = (page: number) => {
     loadFindingsPage(page, {
@@ -126,6 +255,10 @@ export const FindingsPage: React.FC = () => {
                 </span>
               )}
             </div>
+            <p className="mt-2 text-xs text-slate-500 leading-relaxed">
+              OWASP ZAP runs externally and performs the scan through its API — CyberShield only starts it,
+              tracks progress, and synchronizes the resulting alerts as findings.
+            </p>
           </div>
 
           {syncMessage && (
@@ -134,7 +267,16 @@ export const FindingsPage: React.FC = () => {
           </div>
         )}
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
+            <select
+              value={zapAssetId}
+              onChange={(e) => handleZapAssetChange(e.target.value)}
+              disabled={syncingZap || scanning || scanStarting}
+              title="Target asset for ZAP scan and sync"
+              className="px-4 py-2 rounded-lg bg-slate-800 text-sm text-slate-100 border border-slate-700 disabled:opacity-50 transition-colors max-w-[220px]"
+            >
+              {assets.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
             <button
               type="button"
               onClick={handleTestZapConnection}
@@ -146,14 +288,42 @@ export const FindingsPage: React.FC = () => {
 
             <button
               type="button"
-              onClick={handleSyncZap}
-              disabled={syncingZap}
-              className="px-4 py-2 rounded-lg bg-cyan-600 text-sm text-white hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              onClick={handleScanWebsite}
+              disabled={scanning || scanStarting || syncingZap || !zapAssetId}
+              title={assetById(zapAssetId) ? `Ask ZAP to crawl ${assetById(zapAssetId)?.name}` : undefined}
+              className="px-4 py-2 rounded-lg bg-slate-800 text-sm text-slate-100 hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              {syncingZap ? 'Syncing…' : 'Sync Findings'}
+              {scanStarting ? 'Starting…' : scanning ? 'Scanning…' : 'Scan Website'}
+            </button>
+            <button
+              type="button"
+              onClick={handleSyncZap}
+              disabled={syncingZap || !zapAssetId}
+              title={assetById(zapAssetId) ? `Sync ZAP findings for ${assetById(zapAssetId)?.name}` : undefined}
+              className={`px-4 py-2 rounded-lg bg-cyan-600 text-sm text-white hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors ${scanDone ? 'ring-2 ring-emerald-400/70' : ''}`}
+            >
+              {syncingZap ? 'Syncing…' : `Sync Findings · ${assetById(zapAssetId)?.name || `Asset ${zapAssetId}`}`}
             </button>
           </div>
         </div>
+        {(scanning || scanProgress !== null || scanMessage) && !syncDone && (
+          <div className="mt-4 pt-4 border-t border-slate-800/70">
+            {scanStarting && <p className="text-sm text-slate-400">Starting scan…</p>}
+            {scanning && scanProgress !== null && (
+              <>
+                <p className="text-sm text-slate-300">
+                  Scanning {assetById(zapAssetId)?.name || `Asset ${zapAssetId}`}… {scanProgress}%
+                </p>
+                <div className="mt-2 h-2 rounded-full bg-slate-800 overflow-hidden" role="progressbar" aria-valuenow={scanProgress} aria-valuemin={0} aria-valuemax={100}>
+                  <div className="h-full rounded-full bg-cyan-500 transition-all" style={{ width: `${scanProgress}%` }} />
+                </div>
+              </>
+            )}
+            {scanMessage && (
+              <p className={`text-sm mt-2 ${scanDone ? 'text-emerald-300' : scanning || scanStarting ? 'text-slate-400' : 'text-rose-300'}`}>{scanMessage}</p>
+            )}
+          </div>
+        )}
       </Card>
       <Card className="p-5 mb-6">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -181,7 +351,7 @@ export const FindingsPage: React.FC = () => {
               <tr className="text-left text-xs uppercase tracking-wider text-slate-500 border-b border-slate-800">
                 <th className="px-5 py-4 font-medium">Finding ID</th>
                 <th className="px-5 py-4 font-medium">Title</th>
-                <th className="px-5 py-4 font-medium">Severity</th>
+                <th className="px-5 py-4 font-medium">Scanner Severity</th>
                 <th className="px-5 py-4 font-medium">Asset</th>
                 <th className="px-5 py-4 font-medium">Source</th>
                 <th className="px-5 py-4 font-medium">Status</th>

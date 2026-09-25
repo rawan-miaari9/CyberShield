@@ -30,6 +30,10 @@ export interface Asset {
   name: string;
   type: AssetType;
   address: string;
+  /** Raw backend locator fields (kept separate for correct edit prefill). */
+  url?: string;
+  hostname?: string;
+  ipAddress?: string | null;
   description: string;
   owner: string;
   criticality: Severity;

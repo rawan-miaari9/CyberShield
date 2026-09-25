@@ -6,6 +6,22 @@ import type { SecurityFinding } from '../types';
 import { Card, PageHeader, SeverityBadge, Field, Mono, LoadingState, SectionTitle } from '../components/ui';
 import { api, FINDINGS_PAGE_SIZE } from '../services/api';
 
+// Same friendly local-time presentation used elsewhere in the app
+// (Vulnerability/Remediation details): "Sep 24, 2026, 8:24 PM".
+// Invalid/missing values never leak raw text to the UI.
+function formatDateTime(ts: string | null | undefined): string {
+  if (!ts) return '—';
+  const t = new Date(ts).getTime();
+  if (Number.isNaN(t)) return '—';
+  return new Date(t).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 export const AssetDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const { assets, findings, vulnerabilities, isLoading } = useApp();
@@ -95,9 +111,11 @@ export const AssetDetailPage: React.FC = () => {
           <SectionTitle title="Details" />
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <Field label="Type">{asset.type}</Field>
-            <Field label="Address"><Mono className="text-[13px] break-all">{asset.address}</Mono></Field>
-            <Field label="Owner">{asset.owner}</Field>
-            <Field label="Created"><Mono className="text-[13px]">{asset.createdAt}</Mono></Field>
+            <div className="col-span-2 md:col-span-2" title={asset.address || undefined}>
+              <Field label="Address"><Mono className="text-[13px] break-words">{asset.address || '—'}</Mono></Field>
+            </div>
+            <Field label="Owner">{asset.owner || '—'}</Field>
+            <Field label="Created"><Mono className="text-[13px]">{formatDateTime(asset.createdAt)}</Mono></Field>
           </div>
         </Card>
         <Card className="p-6">

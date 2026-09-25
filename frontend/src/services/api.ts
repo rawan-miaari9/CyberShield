@@ -153,6 +153,9 @@ function mapDjangoAsset(asset: DjangoAsset): Asset {
     name: asset.name,
     type: normalizeAssetType(asset.asset_type),
     address: asset.url || asset.hostname || asset.ip_address || '',
+    url: asset.url || '',
+    hostname: asset.hostname || '',
+    ipAddress: asset.ip_address || null,
     description: asset.description,
     owner: '',
     criticality: asset.criticality as Asset['criticality'],
@@ -466,6 +469,17 @@ export interface FindingsStats {
   dismissed: number;
 }
 
+/** POST /api/assets/ payload — backend enum codes (WEB_APP, …). */
+export interface CreateAssetInput {
+  name: string;
+  asset_type: string;
+  hostname?: string;
+  ip_address?: string | null;
+  url?: string;
+  criticality?: string;
+  description?: string;
+}
+
 export const FINDINGS_PAGE_SIZE = 50;
 
 function isPaginatedFindings(
@@ -607,6 +621,45 @@ async syncZapFindings(assetId: string): Promise<{
     return res.data;
   } catch (err) {
     throw toApiError(err, 'ZAP sync');
+  }
+},
+
+async startZapScan(assetId: string): Promise<{
+  scan_id: string;
+  asset_id: number;
+  asset_name: string;
+  target: string;
+  status: string;
+}> {
+  // No ZAP credentials here — the backend owns the ZAP API key and only
+  // returns the scan ID plus safe asset/target info.
+  try {
+    const res = await apiClient.post(
+      'findings/zap/scan/',
+      { asset_id: Number(assetId) },
+      { timeout: 30000 }
+    );
+
+    return res.data;
+  } catch (err) {
+    throw toApiError(err, 'ZAP scan start');
+  }
+},
+
+async getZapScanStatus(scanId: string): Promise<{
+  scan_id: string;
+  progress: number;
+  status: string;
+}> {
+  try {
+    const res = await apiClient.get(
+      'findings/zap/scan-status/',
+      { params: { scan_id: scanId } }
+    );
+
+    return res.data;
+  } catch (err) {
+    throw toApiError(err, 'ZAP scan status');
   }
 },
 
@@ -809,6 +862,32 @@ async getAssets(): Promise<Asset[]> {
   return assets.map(mapDjangoAsset);
 },
 
+async createAsset(input: CreateAssetInput): Promise<Asset> {
+  try {
+    const res = await apiClient.post<DjangoAsset>('assets/', input);
+    return mapDjangoAsset(res.data);
+  } catch (err) {
+    throw toApiError(err, 'asset creation');
+  }
+},
+
+async updateAsset(id: string, patch: Partial<CreateAssetInput>): Promise<Asset> {
+  try {
+    const res = await apiClient.patch<DjangoAsset>(`assets/${id}/`, patch);
+    return mapDjangoAsset(res.data);
+  } catch (err) {
+    throw toApiError(err, 'asset update');
+  }
+},
+
+async deleteAsset(id: string): Promise<void> {
+  try {
+    await apiClient.delete(`assets/${id}/`);
+  } catch (err) {
+    throw toApiError(err, 'asset deletion');
+  }
+},
+
   async getRemediationTasks(): Promise<RemediationTask[]> {
     if (USE_MOCK_DATA) return mockRemediation;
     const tasks = await fetchResource<DjangoRemediation[]>('remediation/', 'remediation tasks');
@@ -916,7 +995,10 @@ async getAssets(): Promise<Asset[]> {
 
   async getUsers(): Promise<User[]> {
     if (USE_MOCK_DATA) return mockUsers;
-    return fetchResource<User[]>('users/', 'users');
+    const items = await fetchResource<Array<User & { is_active?: boolean }>>('users/', 'users');
+    // The Status column reflects the Django account flag (is_active),
+    // not online presence — map it onto the existing User.active field.
+    return items.map(({ is_active, ...rest }) => ({ ...rest, active: is_active }));
   },
 
   async generateAIAnalysis(vulnerabilityId: string): Promise<VulnerabilityAIAnalysis> {

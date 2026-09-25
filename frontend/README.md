@@ -1,20 +1,40 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# CyberShield Frontend
 
-# Run and deploy your AI Studio app
+React + Vite + TypeScript single-page application for the CyberShield Vulnerability
+Management Platform. It orchestrates security workflows through the Django REST backend —
+it never contacts scanner or AI services directly.
 
-This contains everything you need to run your app locally.
+## Stack
 
-View your app in AI Studio: https://ai.studio/apps/1708b300-c2e2-4c3b-b18d-f60ebc1baa18
+React 19 · TypeScript · Vite 6 · React Router 7 · Tailwind CSS 4 · Axios · Recharts.
 
-## Run Locally
+## Installation
 
-**Prerequisites:**  Node.js
+```bash
+npm install
+```
 
+## Environment configuration
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+Copy `.env.example` to `.env`:
+
+- `VITE_API_URL` — Django API base (default `http://127.0.0.1:8000/api/`).
+- `VITE_USE_MOCK_DATA` — `false` for the real backend; anything else runs local demo
+  fixtures from `src/data/` (development only).
+
+## Scripts
+
+```bash
+npm run dev    # local server on http://localhost:3000
+npm run build  # production build into dist/
+npm run lint   # TypeScript check (tsc --noEmit)
+```
+
+## Real API vs mock mode
+
+Real mode (`VITE_USE_MOCK_DATA=false`) calls Django for everything and surfaces genuine API
+errors. Mock mode serves static fixtures for UI development only and must never be used to
+demonstrate backend-backed workflows (lifecycle, RBAC, audit, AI, ZAP).
+
+See the root `README.md` for full architecture, backend setup, RBAC, API reference, and the
+demo workflow.

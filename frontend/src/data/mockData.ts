@@ -14,7 +14,6 @@
 import type {
   Asset,
   AuditLog,
-  AIAnalysis,
   AppNotification,
   RemediationTask,
   ScannerIntegration,
@@ -24,11 +23,10 @@ import type {
 } from '../types';
 
 export const mockUsers: User[] = [
-  { id: 'USR-001', name: 'Amina Diallo', email: 'amina@cybershield.local', role: 'Administrator', active: true, lastLogin: '2026-09-15 09:12 UTC' },
-  { id: 'USR-002', name: 'Jonas Vance', email: 'jonas@cybershield.local', role: 'Security Analyst', active: true, lastLogin: '2026-09-16 08:20 UTC' },
-  { id: 'USR-003', name: 'Priya Nair', email: 'priya@cybershield.local', role: 'Security Analyst', active: true, lastLogin: '2026-09-14 16:44 UTC' },
-  { id: 'USR-004', name: 'Marco Reyes', email: 'marco@cybershield.local', role: 'IT / Developer', active: true, lastLogin: '2026-09-13 11:02 UTC' },
-  { id: 'USR-005', name: 'Sara Lindqvist', email: 'sara@cybershield.local', role: 'Security Manager', active: true, lastLogin: '2026-09-15 14:31 UTC' },
+  { id: 'USR-001', name: 'Amina Diallo', username: 'amina', email: 'amina@cybershield.local', first_name: 'Amina', last_name: 'Diallo', role: 'Administrator', active: true, lastLogin: '2026-09-15 09:12 UTC' },
+  { id: 'USR-002', name: 'Jonas Vance', username: 'jonas', email: 'jonas@cybershield.local', first_name: 'Jonas', last_name: 'Vance', role: 'Security Analyst', active: true, lastLogin: '2026-09-16 08:20 UTC' },
+  { id: 'USR-003', name: 'Priya Nair', username: 'priya', email: 'priya@cybershield.local', first_name: 'Priya', last_name: 'Nair', role: 'Security Analyst', active: true, lastLogin: '2026-09-14 16:44 UTC' },
+  { id: 'USR-004', name: 'Marco Reyes', username: 'marco', email: 'marco@cybershield.local', first_name: 'Marco', last_name: 'Reyes', role: 'IT / Developer', active: true, lastLogin: '2026-09-13 11:02 UTC' },
 ];
 
 // Demo credentials for local development only (validated strictly — invalid
@@ -92,28 +90,6 @@ export const mockAuditLogs: AuditLog[] = [
   { id: 'AUD-1004', timestamp: '2026-09-13 15:22 UTC', user: 'jonas@cybershield.local', action: 'FINDING_PROMOTE', entityType: 'SecurityFinding', entityId: 'FND-007', oldValue: 'Reviewed', newValue: 'Promoted -> VULN-001' },
   { id: 'AUD-1005', timestamp: '2026-09-12 14:00 UTC', user: 'jonas@cybershield.local', action: 'REMEDIATION_VERIFY', entityType: 'RemediationTask', entityId: 'REM-003', oldValue: 'Awaiting Verification', newValue: 'Completed' },
 ];
-
-export const mockAIAnalyses: Record<string, AIAnalysis> = {
-  'VULN-001': {
-    id: 'AI-VULN-001',
-    vulnerabilityId: 'VULN-001',
-    explanation: 'The file-download endpoint builds a filesystem path from user input. Without canonicalization, sequences such as ../ escape the intended directory.',
-    impact: 'An attacker could read sensitive files reachable by the application process, leading to configuration or credential disclosure.',
-    remediationSteps: [
-      'Resolve the requested path to a canonical absolute path on the server.',
-      'Verify the resolved path starts with the allow-listed download directory.',
-      'Reject requests that resolve outside the directory with a generic error.',
-      'Add regression tests for traversal payloads.',
-    ],
-    verificationSteps: [
-      'Replay traversal payloads and confirm they are rejected.',
-      'Confirm legitimate downloads still succeed.',
-      'Review file-access logs for unexpected reads.',
-    ],
-    generatedAt: '2026-09-15 09:00 UTC',
-    model: 'server-side (placeholder)',
-  },
-};
 
 export const trendData = [
   { week: 'W33', open: 9, closed: 4 },

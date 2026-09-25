@@ -1,9 +1,16 @@
 import hashlib
 import os
+import re
 
 import requests
 
 from .models import SecurityFinding
+
+
+def _safe_zap_error(error):
+    """ZAP error text without credentials (request URLs embed the apikey)."""
+    message = str(error) or "ZAP request failed."
+    return re.sub(r"apikey=[^&\s]*", "apikey=***", message)
 
 
 def test_zap_connection():
@@ -141,6 +148,7 @@ def save_zap_finding(alert, integration, asset):
 
     return finding, created
 
+
 def sync_zap_findings(integration, asset):
     """Fetch ZAP alerts and synchronize them with CyberShield."""
 
@@ -175,3 +183,94 @@ def sync_zap_findings(integration, asset):
         "created": created_count,
         "duplicates": duplicate_count,
     }
+
+
+def start_zap_spider(target):
+    """Ask ZAP to crawl a registered asset URL (Spider, not Active Scan).
+
+    Returns {"success": True, "scan_id": "<id>"} or
+    {"success": False, "error": "<safe message>"}. The API key is sent to
+    ZAP only and is never logged, exposed, or returned.
+    """
+
+    zap_url = os.getenv("ZAP_BASE_URL")
+    api_key = os.getenv("ZAP_API_KEY")
+    if not zap_url:
+        return {
+            "success": False,
+            "error": "ZAP is not configured.",
+        }
+
+    try:
+        response = requests.get(
+            f"{zap_url}/JSON/spider/action/scan/",
+            params={"apikey": api_key, "url": target},
+            timeout=10,
+        )
+
+        response.raise_for_status()
+
+        scan_id = str(response.json().get("scan", "")).strip()
+        if not scan_id.isdigit():
+            return {
+                "success": False,
+                "error": "ZAP returned an unexpected response when starting the scan.",
+            }
+
+        return {
+            "success": True,
+            "scan_id": scan_id,
+        }
+
+    except (requests.RequestException, ValueError, AttributeError) as error:
+        return {
+            "success": False,
+            "error": _safe_zap_error(error) or "Unable to start the ZAP scan.",
+        }
+
+
+def get_zap_spider_status(scan_id):
+    """Poll a ZAP Spider scan for integer progress 0-100.
+
+    Returns {"success": True, "scan_id": "<id>", "progress": <int>} or
+    {"success": False, "error": "<safe message>"}.
+    """
+
+    sid = str(scan_id or "").strip()
+    if not sid.isdigit():
+        return {
+            "success": False,
+            "error": "Invalid scan ID.",
+        }
+
+    zap_url = os.getenv("ZAP_BASE_URL")
+    api_key = os.getenv("ZAP_API_KEY")
+    if not zap_url:
+        return {
+            "success": False,
+            "error": "ZAP is not configured.",
+        }
+
+    try:
+        response = requests.get(
+            f"{zap_url}/JSON/spider/view/status/",
+            params={"apikey": api_key, "scanId": sid},
+            timeout=5,
+        )
+
+        response.raise_for_status()
+
+        progress = int(str(response.json().get("status", "")).strip())
+        progress = max(0, min(100, progress))
+
+        return {
+            "success": True,
+            "scan_id": sid,
+            "progress": progress,
+        }
+
+    except (requests.RequestException, ValueError, TypeError, AttributeError) as error:
+        return {
+            "success": False,
+            "error": _safe_zap_error(error) or "Unable to read the ZAP scan status.",
+        }

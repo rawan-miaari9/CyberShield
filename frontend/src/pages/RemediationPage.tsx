@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useApp } from '../context/SecurityContext';
 import { displayUser } from './VulnerabilityDetailPage';
 import { Card, PageHeader, EmptyState, LoadingState, Mono, inputClass } from '../components/ui';
 
 export const RemediationPage: React.FC = () => {
   const { remediation, vulnerabilities, userById, isLoading, getRemediationDisplay } = useApp();
+  const navigate = useNavigate();
   const [status, setStatus] = useState('all');
   // Filter and render on the live display status (persisted task state +
   // linked vulnerability lifecycle), never on a stale local guess.
@@ -14,7 +15,7 @@ export const RemediationPage: React.FC = () => {
 
   return (
     <div>
-      <PageHeader title="Remediation" subtitle="Track fixes from assignment through analyst verification. Only a Security Analyst completes verification." />
+      <PageHeader title="Remediation" subtitle="Track remediation work, ownership, due dates, and completion status for managed vulnerabilities. Lifecycle actions are handled from Vulnerability Details." />
       <Card className="p-5 mb-6">
         <div className="flex flex-col sm:flex-row gap-4 sm:items-center">
           <label className="text-sm text-slate-400">Status</label>
@@ -22,7 +23,6 @@ export const RemediationPage: React.FC = () => {
             <option value="all">All</option>
             <option>To Do</option>
             <option>In Progress</option>
-            <option>Remediated</option>
             <option>Awaiting Verification</option>
             <option>Completed</option>
           </select>
@@ -42,9 +42,9 @@ export const RemediationPage: React.FC = () => {
             </thead>
             <tbody className="divide-y divide-slate-800/70">
               {filtered.map((r) => (
-                <tr key={r.id} className="hover:bg-slate-800/30">
+                <tr key={r.id} onClick={() => navigate(`/remediation/${r.id}`)} className="hover:bg-slate-800/30 cursor-pointer">
                   <td className="px-5 py-4"><Link to={`/remediation/${r.id}`} className="font-mono-code text-[13px] text-cyan-300 hover:underline">{r.id}</Link></td>
-                  <td className="px-5 py-4 text-slate-200 max-w-xs truncate">{r.vulnerabilityId} · {titleFor(r.vulnerabilityId)}</td>
+                  <td className="px-5 py-4 text-slate-200 max-w-xs truncate"><Link to={`/vulnerabilities/${r.vulnerabilityId}`} onClick={(e) => e.stopPropagation()} className="text-cyan-300 hover:underline">{r.vulnerabilityId} · {titleFor(r.vulnerabilityId)}</Link></td>
                   {/* Real persisted assignee via the shared user display;
                       '—' only when genuinely unassigned. The API already
                       returns assigned_to — the old `.name` lookup matched

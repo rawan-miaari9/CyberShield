@@ -6,7 +6,6 @@ const roleDescriptions: Record<string, string> = {
   Administrator: 'Full access to configuration, users, and all records.',
   'Security Analyst': 'Reviews findings, manages vulnerabilities, verifies remediation.',
   'IT / Developer': 'Owns remediation tasks for assigned vulnerabilities.',
-  'Security Manager': 'Oversees progress, assignments, and reporting.',
 };
 
 export const UsersPage: React.FC = () => {
@@ -44,7 +43,7 @@ export const UsersPage: React.FC = () => {
                   <td className="px-5 py-4 text-slate-300 text-[13px]">{u.email}</td>
                   <td className="px-5 py-4 text-slate-300 text-[13px]">{u.role}</td>
                   <td className="px-5 py-4 text-[13px]">{u.active ? <span className="text-emerald-300">Active</span> : <span className="text-slate-500">Inactive</span>}</td>
-                  <td className="px-5 py-4 text-slate-400 text-[13px]"><Mono>{u.lastLogin}</Mono></td>
+                  <td className="px-5 py-4 text-slate-400 text-[13px]"><Mono>{u.lastLogin || '—'}</Mono></td>
                 </tr>
               ))}
             </tbody>
