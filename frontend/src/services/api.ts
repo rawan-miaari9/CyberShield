@@ -34,8 +34,38 @@ export const apiClient: AxiosInstance = axios.create({
   headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
 });
 
+const AUTH_KEYS = ['cybershield_token', 'cybershield_refresh_token', 'cybershield_user'] as const;
+
+/** Read an auth value from persistent storage, falling back to the tab session. */
+export function readAuth(key: string): string | null {
+  return localStorage.getItem(key) ?? sessionStorage.getItem(key);
+}
+
+/**
+ * Persist auth values. Remember-me sessions use localStorage (survive
+ * browser restarts); anything else uses sessionStorage (cleared with the
+ * tab). Stale copies in the other store are removed so the two can never
+ * disagree about which session is active.
+ */
+export function writeAuth(persistent: boolean, entries: Record<string, string>): void {
+  const store = persistent ? localStorage : sessionStorage;
+  const other = persistent ? sessionStorage : localStorage;
+  for (const [key, value] of Object.entries(entries)) {
+    other.removeItem(key);
+    store.setItem(key, value);
+  }
+}
+
+/** Forget auth values in both stores (used on logout and invalid sessions). */
+export function clearAuth(): void {
+  for (const key of AUTH_KEYS) {
+    localStorage.removeItem(key);
+    sessionStorage.removeItem(key);
+  }
+}
+
 apiClient.interceptors.request.use((config) => {
-  const token = localStorage.getItem('cybershield_token');
+  const token = readAuth('cybershield_token');
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
@@ -55,7 +85,7 @@ apiClient.interceptors.response.use(
     ) {
       originalRequest._retry = true;
 
-      const refreshToken = localStorage.getItem(
+      const refreshToken = readAuth(
         'cybershield_refresh_token'
       );
 
@@ -73,7 +103,8 @@ apiClient.interceptors.response.use(
 
         const newAccessToken = response.data.access;
 
-        localStorage.setItem(
+        // Refresh into whichever store holds this session.
+        (localStorage.getItem('cybershield_refresh_token') ? localStorage : sessionStorage).setItem(
           'cybershield_token',
           newAccessToken
         );
@@ -83,9 +114,7 @@ apiClient.interceptors.response.use(
 
         return apiClient(originalRequest);
       } catch (refreshError) {
-        localStorage.removeItem('cybershield_token');
-        localStorage.removeItem('cybershield_refresh_token');
-        localStorage.removeItem('cybershield_user');
+        clearAuth();
 
         window.location.href = '/login';
 

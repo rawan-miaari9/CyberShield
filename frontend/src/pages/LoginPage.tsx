@@ -16,6 +16,7 @@ export const LoginPage: React.FC = () => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
+  const [remember, setRemember] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -24,7 +25,7 @@ export const LoginPage: React.FC = () => {
     setError(null);
     setBusy(true);
     try {
-      await login(username, password);
+      await login(username, password, remember);
       navigate('/dashboard', { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed.');
@@ -140,6 +141,21 @@ export const LoginPage: React.FC = () => {
                 {error}
               </div>
             )}
+
+            <label className="flex items-center gap-3 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={remember}
+                onChange={(e) => setRemember(e.target.checked)}
+                className="w-5 h-5 rounded-md accent-cyan-500 cursor-pointer"
+              />
+              <span className="text-[15px] text-slate-300">
+                Remember me
+                <span className="block text-[13px] text-slate-500 font-normal">
+                  {remember ? 'Stay signed in on this device.' : 'You will be signed out when this tab closes.'}
+                </span>
+              </span>
+            </label>
 
             <button type="submit" disabled={busy} className={`${buttonPrimary} w-full !py-3.5 !text-[17px]`}>
               {busy ? 'Signing in…' : (

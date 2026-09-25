@@ -9,7 +9,7 @@ import type {
   User,
   Vulnerability,
 } from '../types';
-import { api, FINDINGS_PAGE_SIZE } from '../services/api';
+import { api, FINDINGS_PAGE_SIZE, readAuth, writeAuth, clearAuth } from '../services/api';
 import type { CreateAssetInput, FindingsFilters, FindingsStats } from '../services/api';
 import { USE_MOCK_DATA } from '../services/config';
 import { calculateRiskScore, riskLevelForScore } from '../utils/risk';
@@ -17,7 +17,7 @@ import { calculateRiskScore, riskLevelForScore } from '../utils/risk';
 interface AppContextType {
   user: User | null;
   token: string | null;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string, remember?: boolean) => Promise<void>;
   logout: () => void;
   findings: SecurityFinding[];
   // Day 9 Task 5: findings are server-paginated (50/page). `findings` holds
@@ -109,13 +109,13 @@ function appendAudit(
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(() => {
     try {
-      const raw = localStorage.getItem('cybershield_user');
+      const raw = readAuth('cybershield_user');
       return raw ? (JSON.parse(raw) as User) : null;
     } catch {
       return null;
     }
   });
-  const [token, setToken] = useState<string | null>(() => localStorage.getItem('cybershield_token'));
+  const [token, setToken] = useState<string | null>(() => readAuth('cybershield_token'));
   const [findings, setFindings] = useState<SecurityFinding[]>([]);
   const [findingsLoading, setFindingsLoading] = useState(false);
   const [findingsError, setFindingsError] = useState<string | null>(null);
@@ -146,7 +146,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setAuthReady(true);
         return;
       }
-      const stored = localStorage.getItem('cybershield_token');
+      const stored = readAuth('cybershield_token');
       if (!stored) {
         setAuthReady(true);
         return;
@@ -160,9 +160,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (!cancelled) {
           setUser(null);
           setToken(null);
-          localStorage.removeItem('cybershield_token');
-          localStorage.removeItem('cybershield_refresh_token');
-          localStorage.removeItem('cybershield_user');
+          clearAuth();
         }
       } finally {
         if (!cancelled) setAuthReady(true);
@@ -302,26 +300,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // never before auth is restored.
   }, [authReady, token, user?.role]);
 
-const login = useCallback(async (username: string, password: string) => {
+const login = useCallback(async (username: string, password: string, remember = true) => {
   const result = await api.login(username, password);
 
   setUser(result.user);
   setToken(result.token);
 
-  localStorage.setItem('cybershield_token', result.token);
-  localStorage.setItem('cybershield_user', JSON.stringify(result.user));
-
+  const entries: Record<string, string> = {
+    cybershield_token: result.token,
+    cybershield_user: JSON.stringify(result.user),
+  };
   if (result.refreshToken) {
-    localStorage.setItem('cybershield_refresh_token', result.refreshToken);
+    entries.cybershield_refresh_token = result.refreshToken;
   }
+  // Remembered sessions persist across restarts; otherwise the session
+  // lives only in the tab and ends when it closes.
+  writeAuth(remember, entries);
 }, []);
 
   const logout = useCallback(() => {
     setUser(null);
     setToken(null);
-    localStorage.removeItem('cybershield_token');
-    localStorage.removeItem('cybershield_refresh_token');
-    localStorage.removeItem('cybershield_user');
+    clearAuth();
     // The token-gated load effect clears domain state on token loss.
   }, []);
 
