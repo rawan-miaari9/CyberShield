@@ -9,6 +9,7 @@ export const FindingsPage: React.FC = () => {
     findings,
     assetById,
     assets,
+    user,
     findingsLoading,
     findingsError,
     findingsTotal,
@@ -25,6 +26,9 @@ export const FindingsPage: React.FC = () => {
   const [testingZap, setTestingZap] = useState(false);
   const [syncingZap, setSyncingZap] = useState(false);
   const [syncMessage, setSyncMessage] = useState('');
+  // ZAP orchestration (test/scan/sync) is analyst-only — the backend
+  // enforces the same rule with 403s, this just hides dead controls.
+  const canManageZap = user?.role === 'Administrator' || user?.role === 'Security Analyst';
   const [zapAssetId, setZapAssetId] = useState('3');
   // Scan Website (ZAP Spider) state. scan_id lives in component state
   // only; polling stops at 100%, on error, on asset change, or unmount.
@@ -268,6 +272,8 @@ export const FindingsPage: React.FC = () => {
         )}
 
           <div className="flex items-center gap-3 flex-wrap">
+            {canManageZap ? (
+              <>
             <select
               value={zapAssetId}
               onChange={(e) => handleZapAssetChange(e.target.value)}
@@ -304,6 +310,12 @@ export const FindingsPage: React.FC = () => {
             >
               {syncingZap ? 'Syncing…' : `Sync Findings · ${assetById(zapAssetId)?.name || `Asset ${zapAssetId}`}`}
             </button>
+              </>
+            ) : (
+              <p className="text-xs text-slate-500 max-w-[280px] leading-relaxed">
+                Scanner controls require the Security Analyst or Administrator role. Findings synchronized by analysts appear in the list below.
+              </p>
+            )}
           </div>
         </div>
         {(scanning || scanProgress !== null || scanMessage) && !syncDone && (
