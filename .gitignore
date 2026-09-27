@@ -21,3 +21,4 @@ frontend/dist/
 .vscode/
 .DS_Store
 Thumbs.db
+backend/staticfiles/
